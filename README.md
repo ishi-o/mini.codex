@@ -6,8 +6,7 @@ A small Neovim plugin for running and resuming the Codex CLI in a configurable N
 
 ```lua
 {
-	dir = vim.fn.expand("~/Code/mini.codex"),
-	name = "mini.codex",
+	"ishi-o/mini.codex",
 	config = function()
 		require("mini.codex").setup()
 	end,
@@ -43,14 +42,15 @@ require("mini.codex").setup({
 
 ## Commands
 
-```vim
-:Codex
-:Codex new
-:Codex last
-:Codex pick
-:Codex prev
-:Codex next
-:Codex stop
+```text
+:Codex        # toggle codex window
+:Codex toggle # toggle codex window
+:Codex new    # new a codex session
+:Codex last		# codex resume --last
+:Codex pick		# pick a session
+:Codex prev		# previous session, pick the last if there is no active session now
+:Codex next		# next session
+:Codex stop		# close current session
 ```
 
 Session navigation reads Codex's local `$CODEX_HOME/state_5.sqlite` database, falling back to `~/.codex/state_5.sqlite`.

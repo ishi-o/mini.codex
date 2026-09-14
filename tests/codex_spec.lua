@@ -70,6 +70,26 @@ busted.describe("mini.codex", function()
     assert(commands.Codex, "Codex command not found")
   end)
 
+  busted.it("supports Codex toggle", function()
+    require("mini.codex").setup({
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 5,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    eq(1, jobs)
+    vim.cmd("Codex toggle")
+    eq(1, jobs)
+    vim.cmd("Codex toggle")
+    eq(1, jobs)
+  end)
+
   busted.it("opens the only session from initial prev and next", function()
     require("mini.codex").setup({
       win = {

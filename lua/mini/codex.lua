@@ -232,13 +232,15 @@ function M.setup(opts)
       stop_codex()
     elseif o.args == "pick" then
       pick_session()
+    elseif o.args == "toggle" then
+      start_codex("")
     else
       start_codex(o.args)
     end
   end, {
     nargs = "?",
     complete = function()
-      return { "new", "last", "pick", "prev", "next", "stop" }
+      return { "new", "last", "pick", "prev", "next", "stop", "toggle" }
     end,
   })
 end
