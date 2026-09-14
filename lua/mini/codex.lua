@@ -14,14 +14,14 @@ local T = {
 local win_config
 local setup_done = false
 
-local function codex_executable()
-  local nvm = vim.env.NVM_BIN
-  if nvm and nvm ~= "" then
-    local path = vim.fs.joinpath(nvm, "codex")
-    if vim.fn.executable(path) == 1 then
-      return path
-    end
+local function joinpath(base, name)
+  if vim.fs and vim.fs.joinpath then
+    return vim.fs.joinpath(base, name)
   end
+  return base:gsub("[/\\]+$", "") .. "/" .. name
+end
+
+local function codex_executable()
   local path = vim.fn.exepath("codex")
   if path ~= "" then
     return path
@@ -31,8 +31,8 @@ local function codex_executable()
 end
 
 local function session_list(cwd)
-  local db =
-    vim.fs.joinpath(vim.fn.expand((vim.env.CODEX_HOME ~= "" and vim.env.CODEX_HOME) or "~/.codex"), "state_5.sqlite")
+  local home = vim.env.CODEX_HOME
+  local db = joinpath(vim.fn.expand(home and home ~= "" and home or "~/.codex"), "state_5.sqlite")
   if vim.fn.filereadable(db) ~= 1 then
     return {}
   end

@@ -24,13 +24,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y lua5.4 neovim
 
+      - name: Install plenary.nvim
+        run: git clone --depth=1 https://github.com/nvim-lua/plenary.nvim deps/plenary.nvim
+
       - name: Check Lua syntax
-        run: luac5.4 -p lua/mini/codex.lua plugin/codex.lua tests/minimal_init.lua tests/test_codex.lua
+        run: luac5.4 -p lua/mini/codex.lua plugin/codex.lua tests/minimal_init.lua tests/codex_spec.lua
 
       - name: Run tests
         run: >-
           nvim --clean --headless -u tests/minimal_init.lua
-          -c 'luafile tests/test_codex.lua'
+          -c 'PlenaryBustedFile tests/codex_spec.lua'
 
   release:
     name: Release

@@ -1,6 +1,6 @@
 # mini.codex
 
-A small Neovim plugin for running and resuming the Codex CLI in a right-side terminal window.
+A small Neovim plugin for running and resuming the Codex CLI in a configurable Neovim terminal window.
 
 ## Setup
 
