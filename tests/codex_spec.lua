@@ -7,20 +7,33 @@ local function eq(expected, actual)
 end
 
 busted.describe("mini.codex", function()
-  local jobs, stops, notices
+  local jobs, stops, notices, temp_files, job_opts
   local original
+
+  local function open_editor(text)
+    local path = vim.fn.tempname() .. ".md"
+    temp_files[#temp_files + 1] = path
+    vim.fn.writefile(vim.split(text, "\n", { plain = true }), path, "b")
+    require("mini.codex.input")._editor_start(path)
+    return path
+  end
 
   busted.before_each(function()
     pcall(vim.cmd, "Codex stop")
+    vim.o.swapfile = false
 
-    jobs, stops, notices = 0, 0, {}
+    jobs, stops, notices, temp_files, job_opts = 0, 0, {}, {}, nil
     original = {
       codex_home = vim.env.CODEX_HOME,
       exepath = vim.fn.exepath,
       filereadable = vim.fn.filereadable,
       jobstart = vim.fn.jobstart,
       jobstop = vim.fn.jobstop,
+      chansend = vim.fn.chansend,
+      complete_info = vim.fn.complete_info,
       notify = vim.notify,
+      pumvisible = vim.fn.pumvisible,
+      serverstart = vim.fn.serverstart,
       system = vim.fn.system,
     }
 
@@ -31,8 +44,10 @@ busted.describe("mini.codex", function()
     vim.fn.filereadable = function()
       return 1
     end
-    vim.fn.jobstart = function()
+    vim.fn.jobstart = function(_, opts)
       jobs = jobs + 1
+      job_opts = opts
+      vim.api.nvim_buf_set_name(vim.api.nvim_get_current_buf(), "term://codex//codex")
       return jobs
     end
     vim.fn.jobstop = function()
@@ -41,6 +56,9 @@ busted.describe("mini.codex", function()
     vim.notify = function(message)
       notices[#notices + 1] = message
     end
+    vim.fn.serverstart = function()
+      return "/tmp/mini-codex-test.sock"
+    end
     vim.fn.system = function()
       return "only|Only session\n"
     end
@@ -48,19 +66,28 @@ busted.describe("mini.codex", function()
 
   busted.after_each(function()
     pcall(vim.cmd, "Codex stop")
+    require("mini.codex").setup({ input = false })
     vim.env.CODEX_HOME = original.codex_home or ""
     vim.fn.exepath = original.exepath
     vim.fn.filereadable = original.filereadable
     vim.fn.jobstart = original.jobstart
     vim.fn.jobstop = original.jobstop
+    vim.fn.chansend = original.chansend
+    vim.fn.complete_info = original.complete_info
     vim.notify = original.notify
+    vim.fn.pumvisible = original.pumvisible
+    vim.fn.serverstart = original.serverstart
     vim.fn.system = original.system
+    for _, path in ipairs(temp_files) do
+      vim.fn.delete(path)
+    end
   end)
 
   busted.it("loads the module", function()
     local ok, codex = pcall(require, "mini.codex")
     assert(ok, "mini.codex module failed to load")
     assert(codex.setup, "mini.codex.setup missing")
+    assert(not package.loaded["mini.codex.input"], "optional input module loaded eagerly")
   end)
 
   busted.it("creates the Codex command", function()
@@ -88,6 +115,359 @@ busted.describe("mini.codex", function()
     eq(1, jobs)
     vim.cmd("Codex toggle")
     eq(1, jobs)
+  end)
+
+  busted.it("uses the session id in the window name", function()
+    local queries = 0
+    vim.fn.system = function()
+      queries = queries + 1
+      return queries == 1 and "old|Old session\n" or "new|New session\n"
+    end
+
+    require("mini.codex").setup({
+      input = { prompt = "Input: " },
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 5,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    local input_win = vim.api.nvim_get_current_win()
+    local main_win
+    vim.wait(500, function()
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if vim.wo[win].winbar == "Codex [new]" then
+          main_win = win
+          return true
+        end
+      end
+      return false
+    end, 10)
+    local buf = vim.api.nvim_win_get_buf(main_win)
+    local input_buf = vim.api.nvim_win_get_buf(input_win)
+    eq("Codex [new]", vim.fn.fnamemodify(vim.api.nvim_buf_get_name(buf), ":t"))
+    eq("", vim.bo[input_buf].buftype)
+    eq("markdown.codex", vim.bo[input_buf].filetype)
+    eq("mini-codex://input", vim.api.nvim_buf_get_name(input_buf))
+  end)
+
+  busted.it("shows the input as the bottom half of the codex window", function()
+    require("mini.codex").setup({
+      input = {},
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 10,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    eq(1, jobs)
+
+    local input_win = vim.api.nvim_get_current_win()
+    local input_buf = vim.api.nvim_win_get_buf(input_win)
+    eq("", vim.bo[input_buf].buftype)
+    eq("markdown.codex", vim.bo[input_buf].filetype)
+
+    local config = vim.api.nvim_win_get_config(input_win)
+    local main_win = config.win
+    local main_height = vim.api.nvim_win_get_height(main_win)
+    eq(math.floor(main_height / 2), config.height)
+    eq(main_height - config.height, config.row)
+    eq(vim.api.nvim_win_get_width(main_win), config.width)
+  end)
+
+  busted.it("fully replaces the terminal input from the mapping input", function()
+    local sent = {}
+    vim.fn.chansend = function(job, data)
+      sent[#sent + 1] = { job, data }
+    end
+
+    require("mini.codex").setup({
+      input = {},
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 10,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    local input_win = vim.api.nvim_get_current_win()
+    assert(not job_opts.env.VISUAL:find("remote%-wait"), "input editor must not use an unsupported wait command")
+    local input_buf = vim.api.nvim_win_get_buf(input_win)
+    local main_win = vim.api.nvim_win_get_config(input_win).win
+    vim.api.nvim_buf_set_lines(input_buf, 0, -1, false, { "hello", "world" })
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
+    eq("\7", sent[1][2])
+
+    local path = open_editor("old terminal input")
+    vim.wait(500, function()
+      return vim.api.nvim_get_current_win() == main_win
+    end, 10)
+    eq("hello\nworld", table.concat(vim.fn.readfile(path, "b"), "\n"))
+    eq("hello\nworld", table.concat(vim.api.nvim_buf_get_lines(input_buf, 0, -1, false), "\n"))
+    eq(main_win, vim.api.nvim_get_current_win())
+  end)
+
+  busted.it("hides and restores the input window on toggle", function()
+    require("mini.codex").setup({
+      input = {},
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 10,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    local input_win = vim.api.nvim_get_current_win()
+    assert(vim.api.nvim_win_is_valid(input_win), "input window not opened")
+
+    vim.cmd("Codex toggle")
+    assert(not vim.api.nvim_win_is_valid(input_win), "input window not hidden")
+
+    vim.cmd("Codex toggle")
+    local restored = false
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.bo[vim.api.nvim_win_get_buf(win)].filetype == "markdown.codex" then
+        restored = true
+      end
+    end
+    assert(restored, "input window not restored")
+  end)
+
+  busted.it("does not leave an unsaved input buffer", function()
+    require("mini.codex").setup({
+      input = {},
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 10,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    local input_win = vim.api.nvim_get_current_win()
+    local input_buf = vim.api.nvim_get_current_buf()
+    vim.api.nvim_buf_set_lines(input_buf, 0, -1, false, { "draft" })
+    local ok = pcall(vim.cmd, "q")
+    assert(ok, "input buffer should accept :q without !")
+    assert(not vim.api.nvim_win_is_valid(input_win), "input window should close")
+    assert(not vim.bo[input_buf].modified, "hidden input buffer should not block editor quit")
+  end)
+
+  busted.it("keeps the input optional", function()
+    require("mini.codex").setup({
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 10,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    eq(1, jobs)
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local filetype = vim.bo[vim.api.nvim_win_get_buf(win)].filetype
+      assert(filetype ~= "markdown.codex", "optional input window opened by default")
+    end
+
+    vim.cmd("Codex stop")
+    require("mini.codex").setup({ input = false })
+    vim.cmd("Codex")
+    eq(2, jobs)
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local filetype = vim.bo[vim.api.nvim_win_get_buf(win)].filetype
+      assert(filetype ~= "markdown.codex", "input window found while disabled by input = false")
+    end
+  end)
+
+  busted.it("supports an absolute input height", function()
+    require("mini.codex").setup({
+      input = { height = 3 },
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 10,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    local config = vim.api.nvim_win_get_config(vim.api.nvim_get_current_win())
+    eq(3, config.height)
+    eq(7, config.row)
+  end)
+
+  busted.it("copies the terminal input into the mapping input", function()
+    local sent = {}
+    vim.fn.chansend = function(job, data)
+      sent[#sent + 1] = { job, data }
+    end
+
+    require("mini.codex").setup({
+      input = {},
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 10,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    local input_win = vim.api.nvim_get_current_win()
+    local input_buf = vim.api.nvim_win_get_buf(input_win)
+    local main_win = vim.api.nvim_win_get_config(input_win).win
+
+    vim.api.nvim_set_current_win(main_win)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
+    eq(1, sent[1][1])
+    eq("\7", sent[1][2])
+
+    local path = open_editor("current terminal input")
+    vim.wait(500, function()
+      return vim.api.nvim_get_current_win() == input_win
+    end, 10)
+    eq(input_win, vim.api.nvim_get_current_win())
+    eq("current terminal input", table.concat(vim.api.nvim_buf_get_lines(input_buf, 0, -1, false), "\n"))
+
+    vim.api.nvim_buf_set_lines(input_buf, 0, -1, false, { "edited" })
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
+    eq(main_win, vim.api.nvim_get_current_win())
+    assert(require("mini.codex.input")._editor_done(path), "editor helper should be released")
+    eq("edited", table.concat(vim.fn.readfile(path, "b"), "\n"))
+  end)
+
+  busted.it("uses Enter only to edit the mapping input", function()
+    local sent
+    vim.fn.chansend = function(job, data)
+      sent = { job, data }
+    end
+
+    require("mini.codex").setup({
+      input = {},
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 10,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    local input_buf = vim.api.nvim_get_current_buf()
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("Ahello<CR>world<Esc>", true, false, true), "mx", false)
+    assert(not sent, "Enter should not write to the terminal")
+    eq("hello\nworld", table.concat(vim.api.nvim_buf_get_lines(input_buf, 0, -1, false), "\n"))
+  end)
+
+  busted.it("keeps synchronization working while completion is active", function()
+    local sent = {}
+    vim.fn.chansend = function(job, data)
+      sent[#sent + 1] = { job, data }
+    end
+
+    require("mini.codex").setup({
+      input = {},
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 10,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    local input_win = vim.api.nvim_get_current_win()
+    local main_win = vim.api.nvim_win_get_config(input_win).win
+    vim.fn.pumvisible = function()
+      return 0
+    end
+    vim.fn.complete_info = function()
+      return { mode = "keyword" }
+    end
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("ihel<C-g>", true, false, true), "mx", false)
+    vim.wait(500, function()
+      return #sent == 1
+    end, 10)
+    eq("\7", sent[1][2])
+    eq("hel", table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(input_win), 0, -1, false), "\n"))
+
+    open_editor("old input")
+    vim.wait(500, function()
+      return vim.api.nvim_get_current_win() == main_win
+    end, 10)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
+    eq(2, #sent)
+    eq("\7", sent[2][2])
+  end)
+
+  busted.it("does not block repeated editor requests", function()
+    local sent = {}
+    vim.fn.chansend = function(job, data)
+      sent[#sent + 1] = { job, data }
+    end
+
+    require("mini.codex").setup({
+      input = {},
+      win = {
+        relative = "editor",
+        width = 20,
+        height = 10,
+        row = 1,
+        col = 1,
+        style = "minimal",
+      },
+    })
+
+    vim.cmd("Codex")
+    local input_win = vim.api.nvim_get_current_win()
+    local main_win = vim.api.nvim_win_get_config(input_win).win
+    vim.api.nvim_set_current_win(main_win)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
+    eq(1, #sent)
+    eq("\7", sent[1][2])
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
+    eq(2, #sent)
+    eq("\7", sent[2][2])
+
+    open_editor("$completion")
+    vim.wait(500, function()
+      return vim.api.nvim_get_current_win() == input_win
+    end, 10)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
+    eq(main_win, vim.api.nvim_get_current_win())
   end)
 
   busted.it("opens the only session from initial prev and next", function()

@@ -28,7 +28,7 @@ jobs:
         run: git clone --depth=1 https://github.com/nvim-lua/plenary.nvim deps/plenary.nvim
 
       - name: Check Lua syntax
-        run: luac5.4 -p lua/mini/codex.lua plugin/codex.lua tests/minimal_init.lua tests/codex_spec.lua
+        run: luac5.4 -p lua/mini/codex.lua lua/mini/codex/input.lua plugin/codex.lua tests/minimal_init.lua tests/codex_spec.lua
 
       - name: Run tests
         run: >-
