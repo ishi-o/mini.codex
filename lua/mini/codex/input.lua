@@ -3,21 +3,24 @@ local M = {}
 
 ---@class mini.codex.InputConfig
 ---@field enabled? boolean
+---@field pin? boolean
 ---@field prompt? string
 ---@field height? number
 ---@field jump_key? string
 
 ---@class mini.codex.InputState
+---@field pin boolean
 ---@field prompt string
 ---@field height number
 ---@field jump_key string
 
 ---@type mini.codex.InputState
-local defaults = { prompt = "", height = 0.5, jump_key = "<C-g>" }
+local defaults = { pin = true, prompt = "", height = 0.5, jump_key = "<C-g>" }
 local config = vim.deepcopy(defaults)
 local namespace = vim.api.nvim_create_namespace("mini.codex.input")
 local bufnr, winid, main_winid, get_jobid, pending, replacement, editor_path
 local float_config, float_heights
+local show_input
 local available = true
 
 local function buffer_text()
@@ -52,6 +55,11 @@ local function show_prompt()
 end
 
 local function request_editor(mode)
+  if mode == "edit" and editor_path then
+    show_input()
+    focus(winid)
+    return
+  end
   local jobid = get_jobid and get_jobid()
   if not jobid or not main_winid then
     return
@@ -67,6 +75,9 @@ local function apply()
   end
   write_text(editor_path, buffer_text())
   editor_path = nil
+  if not config.pin then
+    M.hide()
+  end
   focus(main_winid)
 end
 
@@ -172,6 +183,20 @@ local function open_float(main_config)
   })
 end
 
+show_input = function()
+  if winid and vim.api.nvim_win_is_valid(winid) then
+    return winid
+  end
+  local main_config = vim.api.nvim_win_get_config(main_winid)
+  winid = main_config.relative ~= "" and open_float(main_config)
+    or vim.api.nvim_open_win(bufnr, true, {
+      win = main_winid,
+      split = "below",
+      height = input_height(vim.api.nvim_win_get_height(main_winid)),
+    })
+  return winid
+end
+
 function M._editor_start(path)
   if not pending then
     return true
@@ -180,12 +205,18 @@ function M._editor_start(path)
   pending, replacement = nil, nil
   if mode == "apply" then
     write_text(path, text or "")
-    vim.schedule_wrap(focus)(main_winid)
+    vim.schedule(function()
+      if not config.pin then
+        M.hide()
+      end
+      focus(main_winid)
+    end)
     return true
   end
   editor_path = path
   set_text(table.concat(vim.fn.readfile(path, "b"), "\n"))
   show_prompt()
+  show_input()
   vim.schedule_wrap(focus)(winid)
   return false
 end
@@ -220,6 +251,17 @@ function M.open(main_win, jobid_fn)
       end,
     })
     vim.bo[bufnr].filetype = "markdown.codex"
+    vim.api.nvim_create_autocmd("WinLeave", {
+      buffer = bufnr,
+      callback = function()
+        local leaving = vim.api.nvim_get_current_win()
+        vim.schedule(function()
+          if not config.pin and winid == leaving and vim.api.nvim_get_current_win() ~= leaving then
+            M.hide()
+          end
+        end)
+      end,
+    })
   end
   show_prompt()
 
@@ -233,13 +275,7 @@ function M.open(main_win, jobid_fn)
     vim.keymap.set("i", key, apply_mapping, vim.tbl_extend("force", opts, { expr = true }))
   end
 
-  winid = main_config.relative ~= "" and open_float(main_config)
-    or vim.api.nvim_open_win(bufnr, true, {
-      win = main_win,
-      split = "below",
-      height = input_height(vim.api.nvim_win_get_height(main_win)),
-    })
-  return winid
+  return config.pin and show_input() or nil
 end
 
 function M.hide()

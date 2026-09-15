@@ -57,6 +57,7 @@ local DEFAULT_CONFIG = {
 	},
 	input = {
 		enabled = false,
+		pin = true,
 		prompt = "",
 		height = 0.5,
 		jump_key = "<C-g>",
@@ -105,6 +106,7 @@ Enable and configure it with the `input` table. Set `input.enabled = false` to d
 local opts = {
 	input = {
 		enabled = true,
+		pin = true, -- keep the input pane visible when it is not focused
 		prompt = "",
 		height = 0.5, -- fraction of the Codex window height, or absolute rows (> 1)
 		jump_key = "<C-g>", -- key that synchronizes and switches inputs

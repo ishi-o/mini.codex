@@ -12,6 +12,7 @@ local DEFAULT_CONFIG = {
   },
   input = {
     enabled = false,
+    pin = true,
     prompt = "",
     height = 0.5,
     jump_key = "<C-g>",

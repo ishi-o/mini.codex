@@ -78,7 +78,7 @@ busted.describe("mini.codex", function()
 
   busted.after_each(function()
     pcall(vim.cmd, "Codex stop")
-    require("mini.codex").setup({ input = { enabled = false } })
+    require("mini.codex").setup({ input = { enabled = false, pin = true } })
     vim.env.CODEX_HOME = original.codex_home or ""
     vim.fn.exepath = original.exepath
     vim.fn.filereadable = original.filereadable
@@ -314,6 +314,48 @@ busted.describe("mini.codex", function()
 
     vim.cmd("Codex")
     eq(3, vim.api.nvim_win_get_height(vim.api.nvim_get_current_win()))
+  end)
+
+  busted.it("only shows an unpinned input while it is focused", function()
+    local sent = {}
+    vim.fn.chansend = function(job, data)
+      sent[#sent + 1] = { job, data }
+    end
+
+    require("mini.codex").setup({
+      input = { enabled = true, pin = false },
+      win = split_win(),
+    })
+
+    vim.cmd("Codex")
+    local main_win = codex_win()
+    eq(main_win, vim.api.nvim_get_current_win())
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      assert(vim.bo[vim.api.nvim_win_get_buf(win)].filetype ~= "markdown.codex", "unpinned input opened eagerly")
+    end
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
+    eq("\7", sent[1][2])
+    local path = open_editor("terminal draft")
+    vim.wait(500, function()
+      return vim.bo[vim.api.nvim_get_current_buf()].filetype == "markdown.codex"
+    end, 10)
+    local input_win = vim.api.nvim_get_current_win()
+    assert(input_win ~= main_win, "unpinned input did not receive focus")
+
+    vim.api.nvim_set_current_win(main_win)
+    vim.wait(500, function()
+      return not vim.api.nvim_win_is_valid(input_win)
+    end, 10)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
+    eq(1, #sent)
+    input_win = vim.api.nvim_get_current_win()
+    assert(input_win ~= main_win, "unpinned input did not regain focus")
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
+    eq(main_win, vim.api.nvim_get_current_win())
+    assert(not vim.api.nvim_win_is_valid(input_win), "unpinned input remained visible without focus")
+    assert(require("mini.codex.input")._editor_done(path), "editor helper should be released")
   end)
 
   busted.it("copies the terminal input into the mapping input", function()
