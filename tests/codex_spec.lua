@@ -78,7 +78,7 @@ busted.describe("mini.codex", function()
 
   busted.after_each(function()
     pcall(vim.cmd, "Codex stop")
-    require("mini.codex").setup({ input = false })
+    require("mini.codex").setup({ input = { enabled = false } })
     vim.env.CODEX_HOME = original.codex_home or ""
     vim.fn.exepath = original.exepath
     vim.fn.filereadable = original.filereadable
@@ -130,7 +130,7 @@ busted.describe("mini.codex", function()
     end
 
     require("mini.codex").setup({
-      input = { prompt = "Input: " },
+      input = { enabled = true, prompt = "Input: " },
       win = split_win(),
     })
 
@@ -156,7 +156,7 @@ busted.describe("mini.codex", function()
 
   busted.it("splits the Codex height between terminal and input", function()
     require("mini.codex").setup({
-      input = {},
+      input = { enabled = true },
       win = split_win(),
     })
 
@@ -182,7 +182,7 @@ busted.describe("mini.codex", function()
 
   busted.it("stacks floating terminal and input windows", function()
     require("mini.codex").setup({
-      input = { height = 4 },
+      input = { enabled = true, height = 4 },
       win = {
         relative = "editor",
         row = 2,
@@ -222,7 +222,7 @@ busted.describe("mini.codex", function()
     end
 
     require("mini.codex").setup({
-      input = {},
+      input = { enabled = true },
       win = split_win(),
     })
 
@@ -246,7 +246,7 @@ busted.describe("mini.codex", function()
 
   busted.it("hides and restores the input window on toggle", function()
     require("mini.codex").setup({
-      input = {},
+      input = { enabled = true },
       win = split_win(),
     })
 
@@ -269,7 +269,7 @@ busted.describe("mini.codex", function()
 
   busted.it("does not leave an unsaved input buffer", function()
     require("mini.codex").setup({
-      input = {},
+      input = { enabled = true },
       win = split_win(),
     })
 
@@ -285,6 +285,7 @@ busted.describe("mini.codex", function()
 
   busted.it("keeps the input optional", function()
     require("mini.codex").setup({
+      input = {},
       win = split_win(),
     })
 
@@ -296,18 +297,18 @@ busted.describe("mini.codex", function()
     end
 
     vim.cmd("Codex stop")
-    require("mini.codex").setup({ input = false })
+    require("mini.codex").setup({ input = { enabled = false } })
     vim.cmd("Codex")
     eq(2, jobs)
     for _, win in ipairs(vim.api.nvim_list_wins()) do
       local filetype = vim.bo[vim.api.nvim_win_get_buf(win)].filetype
-      assert(filetype ~= "markdown.codex", "input window found while disabled by input = false")
+      assert(filetype ~= "markdown.codex", "input window found while input.enabled is false")
     end
   end)
 
   busted.it("supports an absolute input height", function()
     require("mini.codex").setup({
-      input = { height = 3 },
+      input = { enabled = true, height = 3 },
       win = split_win(),
     })
 
@@ -322,7 +323,7 @@ busted.describe("mini.codex", function()
     end
 
     require("mini.codex").setup({
-      input = {},
+      input = { enabled = true },
       win = split_win(),
     })
 
@@ -357,7 +358,7 @@ busted.describe("mini.codex", function()
     end
 
     require("mini.codex").setup({
-      input = {},
+      input = { enabled = true },
       win = split_win(),
     })
 
@@ -375,7 +376,7 @@ busted.describe("mini.codex", function()
     end
 
     require("mini.codex").setup({
-      input = {},
+      input = { enabled = true },
       win = split_win(),
     })
 
@@ -412,7 +413,7 @@ busted.describe("mini.codex", function()
     end
 
     require("mini.codex").setup({
-      input = {},
+      input = { enabled = true },
       win = split_win(),
     })
 

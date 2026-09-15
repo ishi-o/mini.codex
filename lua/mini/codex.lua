@@ -2,9 +2,24 @@ local M = {}
 
 local T = { next_token = 0 }
 
+---@type mini.codex.Config
+local DEFAULT_CONFIG = {
+  win = {
+    vertical = true,
+    width = math.max(1, math.floor(vim.o.columns * 0.4)),
+    win = 0,
+    split = "right",
+  },
+  input = {
+    enabled = false,
+    prompt = "",
+    height = 0.5,
+    jump_key = "<C-g>",
+  },
+}
+
+local config = vim.deepcopy(DEFAULT_CONFIG)
 local input
----@type vim.api.keyset.win_config?
-local win_config
 local setup_done = false
 
 local function input_call(method, ...)
@@ -61,22 +76,14 @@ local function open_input()
   end)
 end
 
-local function open_terminal(config)
+local function open_terminal(win_config)
   local b = T.bufnr
   if not b or not vim.api.nvim_buf_is_valid(b) then
     b = vim.api.nvim_create_buf(false, true)
   end
   T.bufnr = b
   vim.bo[b].bufhidden = "hide"
-  config = config
-    or win_config
-    or {
-      vertical = true,
-      width = math.max(1, math.floor(vim.o.columns * 0.4)),
-      win = 0,
-      split = "right",
-    }
-  T.winid = vim.api.nvim_open_win(b, true, config)
+  T.winid = vim.api.nvim_open_win(b, true, win_config or config.win)
   configure_window()
 end
 
@@ -249,18 +256,19 @@ end
 
 ---@class mini.codex.Config
 ---@field win? vim.api.keyset.win_config
----@field input? false|mini.codex.InputConfig
+---@field input? mini.codex.InputConfig
 
 ---@param opts? mini.codex.Config
 function M.setup(opts)
   opts = opts or {}
-  win_config = opts.win or win_config
-  if opts.input ~= nil then
+  config.win = opts.win or config.win
+  if opts.input then
+    config.input = vim.tbl_deep_extend("force", config.input, opts.input)
     input_call("close")
     input = nil
-    if opts.input ~= false and opts.input.enabled ~= false then
+    if config.input.enabled then
       input = require("mini.codex.input")
-      input.setup(opts.input)
+      input.setup(config.input)
     end
   end
   if setup_done then

@@ -6,6 +6,9 @@ Requires Neovim 0.12 or later.
 
 ## Setup
 
+<details>
+<summary>lazy.nvim</summary>
+
 ```lua
 {
 	"ishi-o/mini.codex",
@@ -15,15 +18,49 @@ Requires Neovim 0.12 or later.
 }
 ```
 
-The default window configuration is:
+</details>
+
+<details>
+<summary>vim.pack</summary>
 
 ```lua
----@type vim.api.keyset.win_config
-local win = {
-	vertical = true,
-	width = math.floor(vim.o.columns * 0.4),
-	win = 0,
-	split = "right",
+vim.pack.add({
+	{ src = "https://github.com/ishi-o/mini.codex" },
+})
+
+require("mini.codex").setup()
+```
+
+</details>
+
+<details>
+<summary>mini.deps</summary>
+
+```lua
+MiniDeps.add({ source = "https://github.com/ishi-o/mini.codex" })
+
+require("mini.codex").setup()
+```
+
+</details>
+
+The complete default configuration is:
+
+```lua
+---@type mini.codex.Config
+local DEFAULT_CONFIG = {
+	win = {
+		vertical = true,
+		width = math.max(1, math.floor(vim.o.columns * 0.4)),
+		win = 0,
+		split = "right",
+	},
+	input = {
+		enabled = false,
+		prompt = "",
+		height = 0.5,
+		jump_key = "<C-g>",
+	},
 }
 ```
 
@@ -61,7 +98,7 @@ The buffer uses the `markdown.codex` filetype, allowing [nvim-codex-lsp](https:/
 
 Synchronization uses Codex's external-editor support inside the current Neovim instance. The plugin sets `VISUAL` only for the Codex process.
 
-Configure it with the `input` table (or use `input = false` to disable an enabled pane):
+Enable and configure it with the `input` table. Set `input.enabled = false` to disable it again:
 
 ```lua
 ---@type mini.codex.Config
