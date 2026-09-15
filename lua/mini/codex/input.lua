@@ -1,22 +1,23 @@
 -- Optional Vim-style editor for Codex's terminal input.
 local M = {}
 
----@class MiniCodexInputConfig
+---@class mini.codex.InputConfig
 ---@field enabled? boolean
 ---@field prompt? string
 ---@field height? number
 ---@field jump_key? string
 
----@class MiniCodexInputState
+---@class mini.codex.InputState
 ---@field prompt string
 ---@field height number
 ---@field jump_key string
 
----@type MiniCodexInputState
-local defaults = { prompt = "Codex: ", height = 0.5, jump_key = "<C-g>" }
+---@type mini.codex.InputState
+local defaults = { prompt = "", height = 0.5, jump_key = "<C-g>" }
 local config = vim.deepcopy(defaults)
 local namespace = vim.api.nvim_create_namespace("mini.codex.input")
 local bufnr, winid, main_winid, get_jobid, pending, replacement, editor_path
+local float_config, float_heights
 local available = true
 
 local function buffer_text()
@@ -77,13 +78,14 @@ end
 
 M._apply = apply
 
----@param opts? MiniCodexInputConfig
+---@param opts? mini.codex.InputConfig
 function M.setup(opts)
-  config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {}) --[[@as MiniCodexInputState]]
+  config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {}) --[[@as mini.codex.InputState]]
   available = true
 end
 
-function M.env()
+---@param main_win integer
+function M.env(main_win)
   local server = vim.v.servername
   if server == "" then
     local ok
@@ -109,6 +111,65 @@ function M.env()
     vim.fn.shellescape("lua " .. helper)
   )
   return { VISUAL = command, MINI_CODEX_SERVER = server }
+end
+
+local function input_height(total)
+  local height = config.height <= 1 and math.floor(total * config.height) or config.height
+  return math.max(1, math.min(height, total - 1))
+end
+
+local function float_position()
+  local position = vim.api.nvim_win_get_position(main_winid)
+  local border = vim.api.nvim_win_get_config(main_winid).border
+  return position[1] + float_heights[1] + (border == "none" and 0 or 2), position[2]
+end
+
+local function sync_float()
+  if not float_heights or not vim.api.nvim_win_is_valid(main_winid) or not vim.api.nvim_win_is_valid(winid) then
+    return
+  end
+  local main_height, height = vim.api.nvim_win_get_height(main_winid), vim.api.nvim_win_get_height(winid)
+  if height ~= float_heights[2] then
+    height = math.max(1, math.min(height, float_heights[3] - 1))
+    main_height = float_heights[3] - height
+    vim.api.nvim_win_set_height(main_winid, main_height)
+  elseif main_height ~= float_heights[1] then
+    main_height = math.max(1, math.min(main_height, float_heights[3] - 1))
+    height = float_heights[3] - main_height
+    vim.api.nvim_win_set_height(winid, height)
+  end
+  float_heights[1], float_heights[2] = main_height, height
+  local row, col = float_position()
+  vim.api.nvim_win_set_config(winid, { relative = "editor", row = row, col = col })
+end
+
+local function open_float(main_config)
+  local total = main_config.height
+  local position = vim.api.nvim_win_get_position(main_winid)
+  local height = input_height(total)
+  float_config = vim.deepcopy(main_config)
+  main_config = vim.tbl_extend("force", main_config, {
+    anchor = "NW",
+    relative = "editor",
+    row = position[1],
+    col = position[2],
+    height = total - height,
+  })
+  main_config.win, main_config.bufpos = nil, nil
+  vim.api.nvim_win_set_config(main_winid, main_config)
+  float_heights = { main_config.height, height, total }
+
+  local row, col = float_position()
+  return vim.api.nvim_open_win(bufnr, true, {
+    relative = "editor",
+    row = row,
+    col = col,
+    width = main_config.width,
+    height = height,
+    style = main_config.style,
+    border = main_config.border,
+    zindex = main_config.zindex,
+  })
 end
 
 function M._editor_start(path)
@@ -140,6 +201,11 @@ function M.open(main_win, jobid_fn)
   if not available or not main_win or not vim.api.nvim_win_is_valid(main_win) then
     return
   end
+  local main_config = vim.api.nvim_win_get_config(main_win)
+  if main_config.relative ~= "" and main_config.height < 2 then
+    vim.notify("mini.codex input requires a window height of at least 2", vim.log.levels.ERROR)
+    return
+  end
   main_winid, get_jobid = main_win, jobid_fn or get_jobid
   if winid and vim.api.nvim_win_is_valid(winid) then
     return winid
@@ -167,18 +233,12 @@ function M.open(main_win, jobid_fn)
     vim.keymap.set("i", key, apply_mapping, vim.tbl_extend("force", opts, { expr = true }))
   end
 
-  local max, height = vim.api.nvim_win_get_height(main_win), config.height
-  height = height <= 1 and math.floor(max * height) or height
-  height = math.max(1, math.min(height, max))
-  winid = vim.api.nvim_open_win(bufnr, true, {
-    relative = "win",
-    win = main_win,
-    width = vim.api.nvim_win_get_width(main_win),
-    height = height,
-    row = max - height,
-    col = 0,
-    style = "minimal",
-  })
+  winid = main_config.relative ~= "" and open_float(main_config)
+    or vim.api.nvim_open_win(bufnr, true, {
+      win = main_win,
+      split = "below",
+      height = input_height(vim.api.nvim_win_get_height(main_win)),
+    })
   return winid
 end
 
@@ -186,7 +246,11 @@ function M.hide()
   if winid and vim.api.nvim_win_is_valid(winid) then
     vim.api.nvim_win_hide(winid)
   end
+  if float_config and main_winid and vim.api.nvim_win_is_valid(main_winid) then
+    vim.api.nvim_win_set_config(main_winid, float_config)
+  end
   winid = nil
+  float_config, float_heights = nil, nil
 end
 
 function M.close()
@@ -196,5 +260,7 @@ function M.close()
   end
   bufnr, main_winid, get_jobid, pending, replacement, editor_path = nil, nil, nil, nil, nil, nil
 end
+
+vim.api.nvim_create_autocmd("WinResized", { callback = sync_float })
 
 return M

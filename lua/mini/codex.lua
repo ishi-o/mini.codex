@@ -123,7 +123,7 @@ local start_job
 
 start_job = function(executable, args, token, fallback)
   local id = vim.fn.jobstart(vim.list_extend({ executable }, args), {
-    env = input_call("env"),
+    env = input_call("env", T.winid),
     pty = true,
     term = true,
     on_exit = function(job, code)
@@ -247,11 +247,11 @@ stop_codex = function()
   clear()
 end
 
----@class MiniCodexConfig
+---@class mini.codex.Config
 ---@field win? vim.api.keyset.win_config
----@field input? false|MiniCodexInputConfig
+---@field input? false|mini.codex.InputConfig
 
----@param opts? MiniCodexConfig
+---@param opts? mini.codex.Config
 function M.setup(opts)
   opts = opts or {}
   win_config = opts.win or win_config

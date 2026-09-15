@@ -10,6 +10,18 @@ busted.describe("mini.codex", function()
   local jobs, stops, notices, temp_files, job_opts
   local original
 
+  local function split_win()
+    return { split = "right", width = 20 }
+  end
+
+  local function codex_win()
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.wo[win].winbar:match("^Codex") then
+        return win
+      end
+    end
+  end
+
   local function open_editor(text)
     local path = vim.fn.tempname() .. ".md"
     temp_files[#temp_files + 1] = path
@@ -99,14 +111,7 @@ busted.describe("mini.codex", function()
 
   busted.it("supports Codex toggle", function()
     require("mini.codex").setup({
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 5,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
@@ -126,14 +131,7 @@ busted.describe("mini.codex", function()
 
     require("mini.codex").setup({
       input = { prompt = "Input: " },
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 5,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
@@ -156,17 +154,10 @@ busted.describe("mini.codex", function()
     eq("mini-codex://input", vim.api.nvim_buf_get_name(input_buf))
   end)
 
-  busted.it("shows the input as the bottom half of the codex window", function()
+  busted.it("splits the Codex height between terminal and input", function()
     require("mini.codex").setup({
       input = {},
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 10,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
@@ -177,12 +168,51 @@ busted.describe("mini.codex", function()
     eq("", vim.bo[input_buf].buftype)
     eq("markdown.codex", vim.bo[input_buf].filetype)
 
-    local config = vim.api.nvim_win_get_config(input_win)
-    local main_win = config.win
+    local main_win = codex_win()
     local main_height = vim.api.nvim_win_get_height(main_win)
-    eq(math.floor(main_height / 2), config.height)
-    eq(main_height - config.height, config.row)
-    eq(vim.api.nvim_win_get_width(main_win), config.width)
+    local input_height = vim.api.nvim_win_get_height(input_win)
+    local total_height = main_height + input_height + 1
+    eq(math.floor(total_height / 2), input_height)
+    eq(vim.api.nvim_win_get_width(main_win), vim.api.nvim_win_get_width(input_win))
+    eq(vim.api.nvim_win_get_position(main_win)[1] + main_height + 1, vim.api.nvim_win_get_position(input_win)[1])
+
+    vim.api.nvim_win_set_height(input_win, input_height + 1)
+    eq(total_height, vim.api.nvim_win_get_height(main_win) + vim.api.nvim_win_get_height(input_win) + 1)
+  end)
+
+  busted.it("stacks floating terminal and input windows", function()
+    require("mini.codex").setup({
+      input = { height = 4 },
+      win = {
+        relative = "editor",
+        row = 2,
+        col = 4,
+        width = 30,
+        height = 12,
+        border = "rounded",
+      },
+    })
+
+    vim.cmd("Codex")
+    local input_win = vim.api.nvim_get_current_win()
+    local main_win = codex_win()
+    local main_position = vim.api.nvim_win_get_position(main_win)
+    local input_position = vim.api.nvim_win_get_position(input_win)
+    eq(8, vim.api.nvim_win_get_height(main_win))
+    eq(4, vim.api.nvim_win_get_height(input_win))
+    eq(main_position[1] + 10, input_position[1])
+    eq(main_position[2], input_position[2])
+    eq(vim.api.nvim_win_get_width(main_win), vim.api.nvim_win_get_width(input_win))
+
+    vim.api.nvim_win_set_height(input_win, 5)
+    vim.cmd("doautocmd WinResized")
+    eq(7, vim.api.nvim_win_get_height(main_win))
+    eq(12, vim.api.nvim_win_get_height(main_win) + vim.api.nvim_win_get_height(input_win))
+
+    vim.cmd("Codex toggle")
+    vim.cmd("Codex toggle")
+    eq(8, vim.api.nvim_win_get_height(codex_win()))
+    eq(4, vim.api.nvim_win_get_height(vim.api.nvim_get_current_win()))
   end)
 
   busted.it("fully replaces the terminal input from the mapping input", function()
@@ -193,21 +223,14 @@ busted.describe("mini.codex", function()
 
     require("mini.codex").setup({
       input = {},
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 10,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
     local input_win = vim.api.nvim_get_current_win()
     assert(not job_opts.env.VISUAL:find("remote%-wait"), "input editor must not use an unsupported wait command")
     local input_buf = vim.api.nvim_win_get_buf(input_win)
-    local main_win = vim.api.nvim_win_get_config(input_win).win
+    local main_win = codex_win()
     vim.api.nvim_buf_set_lines(input_buf, 0, -1, false, { "hello", "world" })
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
     eq("\7", sent[1][2])
@@ -224,14 +247,7 @@ busted.describe("mini.codex", function()
   busted.it("hides and restores the input window on toggle", function()
     require("mini.codex").setup({
       input = {},
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 10,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
@@ -254,14 +270,7 @@ busted.describe("mini.codex", function()
   busted.it("does not leave an unsaved input buffer", function()
     require("mini.codex").setup({
       input = {},
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 10,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
@@ -276,14 +285,7 @@ busted.describe("mini.codex", function()
 
   busted.it("keeps the input optional", function()
     require("mini.codex").setup({
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 10,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
@@ -306,20 +308,11 @@ busted.describe("mini.codex", function()
   busted.it("supports an absolute input height", function()
     require("mini.codex").setup({
       input = { height = 3 },
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 10,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
-    local config = vim.api.nvim_win_get_config(vim.api.nvim_get_current_win())
-    eq(3, config.height)
-    eq(7, config.row)
+    eq(3, vim.api.nvim_win_get_height(vim.api.nvim_get_current_win()))
   end)
 
   busted.it("copies the terminal input into the mapping input", function()
@@ -330,20 +323,13 @@ busted.describe("mini.codex", function()
 
     require("mini.codex").setup({
       input = {},
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 10,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
     local input_win = vim.api.nvim_get_current_win()
     local input_buf = vim.api.nvim_win_get_buf(input_win)
-    local main_win = vim.api.nvim_win_get_config(input_win).win
+    local main_win = codex_win()
 
     vim.api.nvim_set_current_win(main_win)
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
@@ -372,14 +358,7 @@ busted.describe("mini.codex", function()
 
     require("mini.codex").setup({
       input = {},
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 10,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
@@ -397,19 +376,12 @@ busted.describe("mini.codex", function()
 
     require("mini.codex").setup({
       input = {},
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 10,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
     local input_win = vim.api.nvim_get_current_win()
-    local main_win = vim.api.nvim_win_get_config(input_win).win
+    local main_win = codex_win()
     vim.fn.pumvisible = function()
       return 0
     end
@@ -441,19 +413,12 @@ busted.describe("mini.codex", function()
 
     require("mini.codex").setup({
       input = {},
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 10,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex")
     local input_win = vim.api.nvim_get_current_win()
-    local main_win = vim.api.nvim_win_get_config(input_win).win
+    local main_win = codex_win()
     vim.api.nvim_set_current_win(main_win)
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-g>", true, false, true), "mx", false)
     eq(1, #sent)
@@ -472,14 +437,7 @@ busted.describe("mini.codex", function()
 
   busted.it("opens the only session from initial prev and next", function()
     require("mini.codex").setup({
-      win = {
-        relative = "editor",
-        width = 20,
-        height = 5,
-        row = 1,
-        col = 1,
-        style = "minimal",
-      },
+      win = split_win(),
     })
 
     vim.cmd("Codex prev")

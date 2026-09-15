@@ -16,7 +16,8 @@ A small Neovim plugin for running and resuming the Codex CLI in a configurable N
 The default window configuration is:
 
 ```lua
-{
+---@type vim.api.keyset.win_config
+local win = {
 	vertical = true,
 	width = math.floor(vim.o.columns * 0.4),
 	win = 0,
@@ -27,7 +28,8 @@ The default window configuration is:
 Customize it only when needed by passing a `win` table to `setup()`. It is passed directly to `nvim_open_win()`, so it can also define a floating window.
 
 ```lua
-require("mini.codex").setup({
+---@type mini.codex.Config
+local opts = {
 	win = {
 		relative = "editor",
 		width = 80,
@@ -37,14 +39,18 @@ require("mini.codex").setup({
 		style = "minimal",
 		border = "rounded",
 	},
-})
+}
+
+require("mini.codex").setup(opts)
 ```
 
 The window label is automatically `Codex [session-id]`.
 
-## Input pane
+## Input pane (optional)
 
-Codex's built-in Vim mode is too limited for full Neovim editing workflows, so mini.codex offers an optional input pane backed by a real normal buffer. It is not loaded or opened by default. Enable it with an `input` table; the pane is anchored to the bottom half of the Codex window and follows it wherever it is placed.
+Codex's built-in Vim mode is too limited for full Neovim editing workflows, so mini.codex offers an optional input pane backed by a real normal buffer. It is not loaded or opened by default. Enable it with an `input` table; mini.codex divides the Codex window into an upper terminal and lower input buffer.
+
+The two panes share the original Codex window height in both split and floating layouts. Resize either one with `nvim_win_set_height()` and the other adjusts automatically.
 
 The buffer uses the `markdown.codex` filetype, allowing [nvim-codex-lsp](https://github.com/ishi-o/nvim-codex-lsp) to attach automatically and provide completions.
 
@@ -56,14 +62,20 @@ Synchronization uses Codex's external-editor support inside the current Neovim i
 Configure it with the `input` table (or use `input = false` to disable an enabled pane):
 
 ```lua
-require("mini.codex").setup({
+---@type mini.codex.Config
+local opts = {
 	input = {
-		prompt = "Codex input: ",
+		enabled = true,
+		prompt = "",
 		height = 0.5, -- fraction of the Codex window height, or absolute rows (> 1)
 		jump_key = "<C-g>", -- key that synchronizes and switches inputs
 	},
-})
+}
+
+require("mini.codex").setup(opts)
 ```
+
+`mini.codex.Config` and `mini.codex.InputConfig` are exported LuaLS annotations. `win` uses Neovim's `vim.api.keyset.win_config`, so native window fields also receive completion and diagnostics.
 
 ## Commands
 
