@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+env:
+  NVIM_VERSION: v0.12.0
+  PLENARY_REV: 74b06c6c75e4eeb3108ec01852001636d85a932b
+
 jobs:
   test:
     name: Test
@@ -19,13 +23,34 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install test dependencies
+      - name: Cache test dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/nvim
+            deps/plenary.nvim
+          key: test-${{ runner.os }}-${{ runner.arch }}-${{ env.NVIM_VERSION }}-${{ env.PLENARY_REV }}
+
+      - name: Install Lua
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y lua5.4 neovim
+          sudo apt-get install --no-install-recommends -y lua5.4
+
+      - name: Install Neovim
+        run: |
+          if [ ! -x "$HOME/.local/nvim/bin/nvim" ]; then
+            curl -fsSL "https://github.com/neovim/neovim/releases/download/$NVIM_VERSION/nvim-linux-x86_64.tar.gz" | tar -xz
+            mkdir -p "$HOME/.local"
+            mv nvim-linux-x86_64 "$HOME/.local/nvim"
+          fi
+          echo "$HOME/.local/nvim/bin" >> "$GITHUB_PATH"
 
       - name: Install plenary.nvim
-        run: git clone --depth=1 https://github.com/nvim-lua/plenary.nvim deps/plenary.nvim
+        run: |
+          if [ ! -d deps/plenary.nvim ]; then
+            git clone https://github.com/nvim-lua/plenary.nvim deps/plenary.nvim
+            git -C deps/plenary.nvim checkout "$PLENARY_REV"
+          fi
 
       - name: Check Lua syntax
         run: luac5.4 -p lua/mini/codex.lua lua/mini/codex/input.lua plugin/codex.lua tests/minimal_init.lua tests/codex_spec.lua

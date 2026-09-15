@@ -2,6 +2,8 @@
 
 A small Neovim plugin for running and resuming the Codex CLI in a configurable Neovim terminal window.
 
+Requires Neovim 0.12 or later.
+
 ## Setup
 
 ```lua
