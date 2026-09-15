@@ -45,6 +45,12 @@ jobs:
           fi
           echo "$HOME/.local/nvim/bin" >> "$GITHUB_PATH"
 
+      - name: Generate help documentation
+        run: |
+          mkdir -p doc
+          cp README.md doc/mini-codex.txt
+          nvim --clean --headless -c 'helptags doc' -c 'quit'
+
       - name: Install plenary.nvim
         run: |
           if [ ! -d deps/plenary.nvim ]; then
