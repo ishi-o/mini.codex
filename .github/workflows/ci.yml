@@ -45,12 +45,6 @@ jobs:
           fi
           echo "$HOME/.local/nvim/bin" >> "$GITHUB_PATH"
 
-      - name: Generate help documentation
-        run: |
-          mkdir -p doc
-          cp README.md doc/mini-codex.txt
-          nvim --clean --headless -c 'helptags doc' -c 'quit'
-
       - name: Install plenary.nvim
         run: |
           if [ ! -d deps/plenary.nvim ]; then
@@ -65,6 +59,39 @@ jobs:
         run: >-
           nvim --clean --headless -u tests/minimal_init.lua
           -c 'PlenaryBustedFile tests/codex_spec.lua'
+
+  docs:
+    name: Generate vimdoc
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Create vimdoc output directory
+        run: mkdir -p doc
+
+      - name: Generate vimdoc
+        uses: kdheepak/panvimdoc@main
+        with:
+          vimdoc: mini-codex
+          description: "Run and resume the Codex CLI from Neovim"
+          version: "v1.3.0"
+          demojify: true
+          treesitter: true
+
+      - name: Generate helptags
+        run: vim -Nu NONE -n -es -c "helptags doc/" -c "quit"
+
+      - name: Commit documentation if changed
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs: auto-generate vimdoc [skip ci]"
+          branch: ${{ github.ref_name }}
+          file_pattern: doc/*.txt doc/tags
 
   release:
     name: Release
