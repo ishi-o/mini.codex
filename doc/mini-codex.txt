@@ -7,7 +7,7 @@ Table of Contents                               *mini-codex-table-of-contents*
 1. mini.codex                                          |mini-codex-mini.codex|
   - Setup                                        |mini-codex-mini.codex-setup|
   - Input pane (optional)        |mini-codex-mini.codex-input-pane-(optional)|
-  - Output preview (optional)  |mini-codex-mini.codex-output-preview-(optional)|
+  - Output preview (optional)|mini-codex-mini.codex-output-preview-(optional)|
   - Commands                                  |mini-codex-mini.codex-commands|
 
 ==============================================================================
@@ -93,9 +93,9 @@ The complete default configuration is:
     }
 <
 
-Customize it only when needed by passing configuration tables to `setup()`.
-The `win` table is passed directly to `nvim_open_win()`, so it can also define
-a floating window.
+Customize it only when needed by passing configuration tables to `setup()`. The
+`win` table is passed directly to `nvim_open_win()`, so it can also define a
+floating window.
 
 >lua
     ---@type mini.codex.Config
@@ -110,7 +110,7 @@ a floating window.
             border = "rounded",
         },
     }
-
+    
     require("mini.codex").setup(opts)
 <
 
@@ -125,9 +125,8 @@ is not loaded or opened by default. Enable it with an `input` table; mini.codex
 divides the Codex window into an upper terminal and lower input buffer.
 
 By default, the input opens below the Codex window with a height of 30% of the
-screen. The
-`win` table is passed directly to `nvim_open_win()`, so split and floating
-layouts, dimensions, position, and appearance are controlled by native
+screen. The `win` table is passed directly to `nvim_open_win()`, so split and
+floating layouts, dimensions, position, and appearance are controlled by native
 Neovim window configuration. For a floating Codex window, the default input
 follows the main window’s position and width; use `relative = "win"` for the
 same behavior with a custom floating configuration. An explicitly positioned
@@ -164,6 +163,7 @@ or Mason; no additional configuration is needed:
             enabled = true,
         },
     }
+    
     require("mini.codex").setup(opts)
 <
 
@@ -204,18 +204,16 @@ disable it again:
     require("mini.codex").setup(opts)
 <
 
-`mini.codex.Config`, `mini.codex.InputConfig`, and `mini.codex.OutputConfig` are
-exported LuaLS annotations. `win` uses Neovim’s `vim.api.keyset.win_config`, so
-native window fields also receive completion and diagnostics.
+`mini.codex.Config`, `mini.codex.InputConfig`, and `mini.codex.OutputConfig`
+are exported LuaLS annotations. `win` uses Neovim’s
+`vim.api.keyset.win_config`, so native window fields also receive completion
+and diagnostics.
 
 
-OUTPUT PREVIEW (OPTIONAL)            *mini-codex-mini.codex-output-preview-(optional)*
+OUTPUT PREVIEW (OPTIONAL)    *mini-codex-mini.codex-output-preview-(optional)*
 
-The optional output preview is an independent Markdown buffer. It reads the
-active session’s `rollout_path` from Codex’s state database and parses the
-structured JSONL rollout, so it does not copy ANSI control sequences or
-terminal wrapping. The preview shows the latest assistant message and keeps
-Markdown characters such as newlines and `|` unchanged.
+The optional output preview displays the current Codex response in a dedicated
+read-only window. It is disabled by default.
 
 Enable it with an `output` table:
 
@@ -239,7 +237,7 @@ Enable it with an `output` table:
             },
         },
     }
-
+    
     require("mini.codex").setup(opts)
 <
 
@@ -247,9 +245,8 @@ The `output.win` table uses Neovim’s native window configuration. By default,
 the preview is a split to the right of the Codex window, with a width of 50% of
 the Codex window’s width and the same height. An explicit `width` or `height`
 overrides the default. For a floating preview, use `relative = "editor"` with
-the desired position and dimensions. The toggle key opens or hides the
-preview, and the refresh key (default `<C-r>`) rereads the current rollout. The
-preview buffer uses the `markdown` filetype and is not editable.
+the desired position and dimensions. The toggle key opens or hides the preview,
+and the refresh key (default `<C-r>`) updates the preview.
 
 
 COMMANDS                                      *mini-codex-mini.codex-commands*
