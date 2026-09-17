@@ -619,6 +619,7 @@ busted.describe("mini.codex", function()
       return vim.api.nvim_get_current_win() == input_win
     end, 10)
     eq("last confirmed input", vim.api.nvim_buf_get_lines(input_buf, 0, 1, false)[1])
+    require("mini.codex.input")._apply()
     assert(require("mini.codex.input")._editor_done(path), "history editor helper should be released")
   end)
 
