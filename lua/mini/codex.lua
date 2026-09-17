@@ -41,6 +41,9 @@ local DEFAULT_CONFIG = {
     keymap = {
       toggle = "<C-t>",
       refresh = "<C-r>",
+      prev = "<M-p>",
+      next = "<M-n>",
+      detail = "<CR>",
     },
   },
 }

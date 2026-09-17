@@ -82,6 +82,9 @@ local DEFAULT_CONFIG = {
 		keymap = {
 			toggle = "<C-t>",
 			refresh = "<C-r>",
+			prev = "<M-p>",
+			next = "<M-n>",
+			detail = "<CR>",
 		},
 	},
 }
@@ -179,11 +182,11 @@ local opts = {
 require("mini.codex").setup(opts)
 ```
 
-`mini.codex.Config`, `mini.codex.InputConfig`, and `mini.codex.OutputConfig` are exported LuaLS annotations. `win` uses Neovim's `vim.api.keyset.win_config`, so native window fields also receive completion and diagnostics.
+`mini.codex.Config`, `mini.codex.InputConfig`, `mini.codex.OutputConfig`, `mini.codex.OutputChatTurnKind`, and `mini.codex.OutputChatTurnLabel` are exported LuaLS annotations. `win` uses Neovim's `vim.api.keyset.win_config`, so native window fields also receive completion and diagnostics.
 
 ## Output preview (optional)
 
-The optional output preview displays the response history of the active Codex session in a dedicated read-only window. It is disabled by default. Each turn includes its question and response, and the window title identifies the latest turn.
+The optional output preview displays one complete chat from the active Codex session in a dedicated read-only window. It is disabled by default. User and assistant messages are shown in full; every other internal turn is compacted to its type, state, and a short description for fast rendering. Each turn uses a `#` heading and no horizontal separator.
 
 Enable it with an `output` table:
 
@@ -204,6 +207,9 @@ local opts = {
 		keymap = {
 			toggle = "<C-t>",
 			refresh = "<C-r>",
+			prev = "<M-p>", -- show the previous chat
+			next = "<M-n>", -- show the next chat
+			detail = "<CR>", -- show or dismiss the turn under the cursor
 		},
 	},
 }
@@ -211,7 +217,7 @@ local opts = {
 require("mini.codex").setup(opts)
 ```
 
-The `output.win` table uses Neovim's native window configuration. By default, the preview is a split to the right of the Codex window, with a width of 50% of the Codex window's width and the same height. An explicit `width` or `height` overrides the default. For a floating preview, use `relative = "editor"` with the desired position and dimensions. The toggle key opens or hides the preview, and the refresh key (default `<C-r>`) updates the response history.
+The `output.win` table uses Neovim's native window configuration. By default, the preview is a split to the right of the Codex window, with a width of 50% of the Codex window's width and the same height. An explicit `width` or `height` overrides the default. For a floating preview, use `relative = "editor"` with the desired position and dimensions. The toggle key opens or hides the preview, and the refresh key (default `<C-r>`) reloads the session while preserving the selected chat when possible. Put the cursor on a turn and press the detail key (default `<CR>`) to load only that turn's full database record; press it again to return to the compact chat.
 
 ## Commands
 
@@ -226,4 +232,4 @@ The `output.win` table uses Neovim's native window configuration. By default, th
 :Codex stop	  # close current session
 ```
 
-Session navigation reads Codex's local `$CODEX_HOME/state_5.sqlite` database, falling back to `~/.codex/state_5.sqlite`.
+Session and output navigation read Codex's local `$CODEX_HOME/state_5.sqlite` and `$CODEX_HOME/thread_history_1.sqlite` databases, falling back to `~/.codex/`.

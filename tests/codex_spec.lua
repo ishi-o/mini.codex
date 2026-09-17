@@ -109,6 +109,9 @@ busted.describe("mini.codex", function()
         keymap = {
           toggle = "<C-t>",
           refresh = "<C-r>",
+          prev = "<M-p>",
+          next = "<M-n>",
+          detail = "<CR>",
         },
       },
     })
@@ -678,7 +681,7 @@ busted.describe("mini.codex", function()
     eq("\7", sent[2][2])
   end)
 
-  busted.it("previews the Codex response history", function()
+  busted.it("previews and navigates the Codex response history", function()
     local rollout = vim.fn.tempname() .. ".jsonl"
     temp_files[#temp_files + 1] = rollout
     vim.fn.writefile({
@@ -749,26 +752,143 @@ busted.describe("mini.codex", function()
     vim.api.nvim_set_current_win(main_win)
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-t>", true, false, true), "mx", false)
 
-    local output_buf = vim.api.nvim_win_get_buf(vim.api.nvim_get_current_win())
-    local output_config = vim.api.nvim_win_get_config(vim.api.nvim_get_current_win())
+    local output_win = vim.api.nvim_get_current_win()
+    local output_buf = vim.api.nvim_win_get_buf(output_win)
+    local output_config = vim.api.nvim_win_get_config(output_win)
     eq("editor", output_config.relative)
     eq(1, output_config.row)
     eq(2, output_config.col)
     eq(40, output_config.width)
     eq(8, output_config.height)
     eq("minimal", output_config.style)
-    eq("Codex output · turn 2/2 · for latest question", vim.wo[vim.api.nvim_get_current_win()].winbar)
+    eq("Codex output · chat 2/2 · for latest question", vim.wo[output_win].winbar)
     eq("markdown", vim.bo[output_buf].filetype)
     eq(
-      "## Turn 1 · for old question\n\nold answer\n\n---\n\n## Turn 2 · for latest question\n\n# latest\n\nvalue | preserved",
+      "## Chat 2 · for latest question\n\n# Turn 1 · User\n\nlatest question\n\n"
+        .. "# Turn 2 · Assistant\n\n# latest\n\nvalue | preserved",
+      table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n")
+    )
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<M-p>", true, false, true), "mx", false)
+    eq("Codex output · chat 1/2 · for old question", vim.wo[output_win].winbar)
+    eq(
+      "## Chat 1 · for old question\n\n# Turn 1 · User\n\nold question\n\n# Turn 2 · Assistant\n\nold answer",
       table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n")
     )
 
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-r>", true, false, true), "mx", false)
     eq(
-      "## Turn 1 · for old question\n\nold answer\n\n---\n\n## Turn 2 · for latest question\n\n# latest\n\nvalue | preserved",
+      "## Chat 1 · for old question\n\n# Turn 1 · User\n\nold question\n\n# Turn 2 · Assistant\n\nold answer",
       table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n")
     )
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<M-n>", true, false, true), "mx", false)
+    eq(
+      "## Chat 2 · for latest question\n\n# Turn 1 · User\n\nlatest question\n\n"
+        .. "# Turn 2 · Assistant\n\n# latest\n\nvalue | preserved",
+      table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n")
+    )
+  end)
+
+  busted.it("previews command and subagent results from the database", function()
+    vim.fn.system = function(args)
+      local sql = args[#args]
+      if sql:find("FROM thread_turns", 1, true) then
+        return vim.json.encode({
+          { turn_id = "chat-1", status = "completed", started_at = 10, completed_at = 20 },
+        })
+      end
+      if sql:find("item_type = 'agentMessage'", 1, true) then
+        return vim.json.encode({
+          { item_json = vim.json.encode({ type = "agentMessage", text = "helper result" }) },
+        })
+      end
+      if sql:find("item_id = 'command-1'", 1, true) then
+        return vim.json.encode({
+          {
+            item_json = vim.json.encode({
+              type = "commandExecution",
+              command = "printf ran",
+              aggregatedOutput = "ran result",
+              status = "completed",
+              exitCode = 0,
+            }),
+          },
+        })
+      end
+      if sql:find("FROM thread_items", 1, true) then
+        return vim.json.encode({
+          {
+            turn_id = "chat-1",
+            item_id = "user-1",
+            item_type = "userMessage",
+            item_json = vim.json.encode({
+              type = "userMessage",
+              content = { { type = "text", text = "run question" } },
+            }),
+          },
+          {
+            turn_id = "chat-1",
+            item_id = "command-1",
+            item_type = "commandExecution",
+            summary = "printf ran",
+            status = "completed",
+            exit_code = 0,
+          },
+          {
+            turn_id = "chat-1",
+            item_id = "agent-1",
+            item_type = "agentMessage",
+            item_json = vim.json.encode({ type = "agentMessage", text = "agent done" }),
+          },
+        })
+      end
+      if sql:find("FROM thread_spawn_edges", 1, true) then
+        return vim.json.encode({ { id = "child-1", status = "completed", title = "Helper", created_at = 15 } })
+      end
+      return vim.json.encode({ { id = "only", title = "Only session" } })
+    end
+
+    require("mini.codex").setup({
+      output = { enabled = true },
+      win = split_win(),
+    })
+
+    vim.cmd("Codex prev")
+    vim.api.nvim_set_current_win(codex_win())
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-t>", true, false, true), "mx", false)
+
+    local output_win = vim.api.nvim_get_current_win()
+    local output_buf = vim.api.nvim_win_get_buf(output_win)
+    local output = table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n")
+    assert(output:find("run question", 1, true), "user message missing")
+    assert(output:find("agent done", 1, true), "assistant message missing")
+    assert(output:find("# Turn 2 · Command · completed · exit 0", 1, true), "command turn missing")
+    assert(output:find("printf ran", 1, true), "command summary missing")
+    assert(not output:find("ran result", 1, true), "command detail should load lazily")
+    assert(output:find("# Turn 4 · Subagent · completed", 1, true), "subagent turn missing")
+    assert(output:find("Helper", 1, true), "subagent summary missing")
+    assert(not output:find("\n---\n", 1, true), "horizontal turn separator should not be present")
+
+    local lines = vim.api.nvim_buf_get_lines(output_buf, 0, -1, false)
+    local command_line
+    for index, line in ipairs(lines) do
+      if line:find("# Turn 2 · Command", 1, true) then
+        command_line = index
+        break
+      end
+    end
+    assert(command_line, "command heading missing")
+    vim.api.nvim_win_set_cursor(output_win, { command_line, 0 })
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "mx", false)
+    output = table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n")
+    assert(output:find("```sh\n$ printf ran\n```", 1, true), "detail command invocation missing")
+    assert(output:find("```text\nran result\n```", 1, true), "detail command result missing")
+    eq("Codex detail · Command · press <CR> to return", vim.wo[output_win].winbar)
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "mx", false)
+    output = table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n")
+    assert(not output:find("ran result", 1, true), "detail should close with the same key")
   end)
 
   busted.it("opens the default output beside the Codex window", function()

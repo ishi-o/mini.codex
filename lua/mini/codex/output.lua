@@ -3,6 +3,9 @@ local M = {}
 ---@class mini.codex.OutputKeymap
 ---@field toggle string
 ---@field refresh string
+---@field prev string
+---@field next string
+---@field detail string
 
 ---@class mini.codex.OutputConfig
 ---@field enabled? boolean
@@ -22,6 +25,9 @@ local defaults = {
   keymap = {
     toggle = "<C-t>",
     refresh = "<C-r>",
+    prev = "<M-p>",
+    next = "<M-n>",
+    detail = "<CR>",
   },
 }
 local config = vim.deepcopy(defaults)
@@ -34,6 +40,10 @@ local output_bound_keys = {}
 local adaptive_window = false
 local syncing_window = false
 local output_title = "Codex output"
+local output_chats = {}
+local selected_chat
+local turn_ranges = {}
+local detail_turn
 
 local function is_valid_window(win)
   return win and vim.api.nvim_win_is_valid(win)
@@ -79,7 +89,10 @@ local function set_main_keymaps()
   local keymap = config.keymap
   map_key(buf, { "n", "t" }, keymap.toggle, M.toggle)
   map_key(buf, { "n", "t" }, keymap.refresh, M.refresh)
+  map_key(buf, { "n", "t" }, keymap.prev, M.prev)
+  map_key(buf, { "n", "t" }, keymap.next, M.next)
   main_bound_keys.toggle, main_bound_keys.refresh = keymap.toggle, keymap.refresh
+  main_bound_keys.prev, main_bound_keys.next = keymap.prev, keymap.next
 end
 
 local function set_output_keymaps()
@@ -90,7 +103,12 @@ local function set_output_keymaps()
   local keymap = config.keymap
   map_key(bufnr, "n", keymap.toggle, M.toggle)
   map_key(bufnr, "n", keymap.refresh, M.refresh)
+  map_key(bufnr, "n", keymap.prev, M.prev)
+  map_key(bufnr, "n", keymap.next, M.next)
+  map_key(bufnr, "n", keymap.detail, M.detail)
   output_bound_keys.toggle, output_bound_keys.refresh = keymap.toggle, keymap.refresh
+  output_bound_keys.prev, output_bound_keys.next = keymap.prev, keymap.next
+  output_bound_keys.detail = keymap.detail
 end
 
 local function set_buffer_name()
@@ -108,37 +126,50 @@ local function compact_text(text, max_chars)
   return compact
 end
 
-local function set_output_title(turns)
-  local latest = turns[#turns]
-  if not latest then
+local function set_output_title(chat)
+  if not chat then
     output_title = "Codex output"
   else
-    local question = compact_text(latest.question, 60)
+    local question = compact_text(chat.question, 60)
     question = question:gsub("%%", "%%%%")
-    output_title = question == "" and string.format("Codex output · turn %d/%d", latest.turn, #turns)
-      or string.format("Codex output · turn %d/%d · for %s", latest.turn, #turns, question)
+    output_title = question == "" and string.format("Codex output · chat %d/%d", chat.chat, #output_chats)
+      or string.format("Codex output · chat %d/%d · for %s", chat.chat, #output_chats, question)
   end
   if is_valid_window(winid) then
     vim.wo[winid].winbar = output_title
   end
 end
 
-local function render_history(turns)
-  if #turns == 0 then
+local function render_chat(chat)
+  if not chat then
     return { "No Codex output available yet." }
   end
-  local lines = {}
-  for index, turn in ipairs(turns) do
+  local question = compact_text(chat.question, 80)
+  local heading = string.format("## Chat %d", chat.chat)
+  if question ~= "" then
+    heading = heading .. " · for " .. question
+  end
+  local lines = { heading, "" }
+  for index in pairs(turn_ranges) do
+    turn_ranges[index] = nil
+  end
+  for index, turn in ipairs(chat.turns) do
     if index > 1 then
-      vim.list_extend(lines, { "", "---", "" })
+      lines[#lines + 1] = ""
     end
-    local question = compact_text(turn.question, 80)
-    local heading = string.format("## Turn %d", turn.turn)
-    if question ~= "" then
-      heading = heading .. " · for " .. question
+    local start_line = #lines + 1
+    local heading = string.format("# Turn %d · %s", index, turn.label)
+    if turn.status then
+      heading = heading .. " · " .. turn.status
     end
     vim.list_extend(lines, { heading, "" })
-    vim.list_extend(lines, vim.split(turn.response, "\n", { plain = true }))
+    lines[#lines + 1] = turn.kind == "command" and "````sh" or "````markdown"
+    vim.list_extend(lines, vim.split(turn.text, "\n", { plain = true }))
+    lines[#lines + 1] = "````"
+    turn_ranges[index] = { start_line = start_line, end_line = #lines }
+  end
+  if #lines == 0 then
+    return { "No Codex output available yet." }
   end
   return lines
 end
@@ -158,16 +189,29 @@ local function ensure_buffer()
   return bufnr
 end
 
----@param turns mini.codex.OutputTurn[]
-local function set_text(turns)
+local function set_buffer_lines(lines)
   ensure_buffer()
-  set_buffer_name()
-  local lines = render_history(turns)
-  set_output_title(turns)
   vim.bo[bufnr].modifiable = true
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
   vim.bo[bufnr].modified = false
   vim.bo[bufnr].modifiable = false
+end
+
+---@param chats mini.codex.OutputChat[]
+local function set_text(chats)
+  ensure_buffer()
+  set_buffer_name()
+  local chat = chats[selected_chat]
+  local lines = render_chat(chat)
+  detail_turn = nil
+  set_output_title(chat)
+  set_buffer_lines(lines)
+end
+
+local function move_cursor_to_start()
+  if is_valid_window(winid) then
+    pcall(vim.api.nvim_win_set_cursor, winid, { 1, 0 })
+  end
 end
 
 local function border_width(win_config)
@@ -271,7 +315,7 @@ function M.hide()
 end
 
 ---@param token integer?
----@return mini.codex.OutputTurn[]?
+---@return mini.codex.OutputChat[]?
 function M.refresh(token)
   if not config.enabled then
     return
@@ -279,9 +323,77 @@ function M.refresh(token)
   if token and session_token and token ~= session_token then
     return
   end
-  local turns = storage.output_history(session_id)
-  set_text(turns)
-  return turns
+  local previous = output_chats[selected_chat]
+  local chats = storage.output_history(session_id)
+  selected_chat = #chats
+  if previous then
+    for index, chat in ipairs(chats) do
+      local same_chat_id = chat.turn_id ~= nil and chat.turn_id == previous.turn_id
+      if same_chat_id or chat.chat == previous.chat then
+        selected_chat = index
+        break
+      end
+    end
+  end
+  output_chats = chats
+  set_text(chats)
+  return chats
+end
+
+function M.prev()
+  if not config.enabled or selected_chat == nil or selected_chat <= 1 then
+    return
+  end
+  selected_chat = selected_chat - 1
+  set_text(output_chats)
+  move_cursor_to_start()
+end
+
+function M.next()
+  if not config.enabled or selected_chat == nil or selected_chat >= #output_chats then
+    return
+  end
+  selected_chat = selected_chat + 1
+  set_text(output_chats)
+  move_cursor_to_start()
+end
+
+function M.detail()
+  if not config.enabled or not is_valid_window(winid) then
+    return
+  end
+  if detail_turn then
+    set_text(output_chats)
+    return
+  end
+
+  local cursor_line = vim.api.nvim_win_get_cursor(winid)[1]
+  local chat = output_chats[selected_chat]
+  local turn_index
+  for index, range in pairs(turn_ranges) do
+    if cursor_line >= range.start_line and cursor_line <= range.end_line then
+      turn_index = index
+      break
+    end
+  end
+  local turn = chat and chat.turns[turn_index]
+  if not turn then
+    return
+  end
+
+  local text = storage.output_turn_detail(session_id, turn, chat.turn_id)
+  if not text or text == "" then
+    return
+  end
+  detail_turn = turn
+  local lines = {
+    string.format("# Detail · Turn %d · %s", turn_index, turn.label),
+    "",
+  }
+  vim.list_extend(lines, vim.split(text, "\n", { plain = true }))
+  set_buffer_lines(lines)
+  vim.wo[winid].winbar = string.format("Codex detail · %s · press %s to return", turn.label, config.keymap.detail)
+  vim.api.nvim_win_set_cursor(winid, { 1, 0 })
 end
 
 function M.show()
@@ -313,6 +425,7 @@ function M.attach(main_win, id, token)
     return
   end
   main_winid, main_bufnr, session_id, session_token = main_win, vim.api.nvim_win_get_buf(main_win), id, token
+  output_chats, selected_chat = {}, nil
   set_buffer_name()
   set_main_keymaps()
   if is_valid_window(winid) then
@@ -327,7 +440,11 @@ function M.set_session(id, token)
   if token and session_token and token ~= session_token then
     return
   end
+  local session_changed = id ~= session_id
   session_id, session_token = id, token or session_token
+  if session_changed then
+    output_chats, selected_chat = {}, nil
+  end
   set_buffer_name()
   if is_valid_window(winid) then
     M.refresh(token)
@@ -359,6 +476,8 @@ function M.close()
   main_bound_keys, output_bound_keys = {}, {}
   adaptive_window, syncing_window = false, false
   output_title = "Codex output"
+  output_chats, selected_chat = {}, nil
+  turn_ranges, detail_turn = {}, nil
 end
 
 vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, { callback = sync_window })
