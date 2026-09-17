@@ -76,7 +76,7 @@ busted.describe("mini.codex", function()
       return "/tmp/mini-codex-test.sock"
     end
     vim.fn.system = function()
-      return "only|Only session\n"
+      return '[{"id":"only","title":"Only | session"}]'
     end
   end)
 
@@ -88,10 +88,27 @@ busted.describe("mini.codex", function()
         pin = true,
         lsp = true,
         lsp_cmd = "codex-prompt-lsp",
+        win = {
+          win = 0,
+          split = "below",
+          height = math.max(1, math.floor(vim.o.lines * 0.3)),
+        },
         keymap = {
           jump = "<C-g>",
           prev = "<M-p>",
           next = "<M-n>",
+        },
+      },
+      output = {
+        enabled = false,
+        win = {
+          win = 0,
+          split = "right",
+          vertical = true,
+        },
+        keymap = {
+          toggle = "<C-t>",
+          refresh = "<C-r>",
         },
       },
     })
@@ -120,6 +137,7 @@ busted.describe("mini.codex", function()
     assert(ok, "mini.codex module failed to load")
     assert(codex.setup, "mini.codex.setup missing")
     assert(not package.loaded["mini.codex.input"], "optional input module loaded eagerly")
+    assert(not package.loaded["mini.codex.output"], "optional output module loaded eagerly")
   end)
 
   busted.it("creates the Codex command", function()
@@ -146,7 +164,7 @@ busted.describe("mini.codex", function()
     local queries = 0
     vim.fn.system = function()
       queries = queries + 1
-      return queries == 1 and "old|Old session\n" or "new|New session\n"
+      return queries == 1 and '[{"id":"old","title":"Old session"}]' or '[{"id":"new","title":"New session"}]'
     end
 
     require("mini.codex").setup({
@@ -174,9 +192,16 @@ busted.describe("mini.codex", function()
     eq("mini-codex://input", vim.api.nvim_buf_get_name(input_buf))
   end)
 
-  busted.it("splits the Codex height between terminal and input", function()
+  busted.it("uses the native input split configuration", function()
     require("mini.codex").setup({
-      input = { enabled = true },
+      input = {
+        enabled = true,
+        win = {
+          split = "below",
+          height = 4,
+          win = 0,
+        },
+      },
       win = split_win(),
     })
 
@@ -192,7 +217,7 @@ busted.describe("mini.codex", function()
     local main_height = vim.api.nvim_win_get_height(main_win)
     local input_height = vim.api.nvim_win_get_height(input_win)
     local total_height = main_height + input_height + 1
-    eq(math.floor(total_height / 2), input_height)
+    eq(4, input_height)
     eq(vim.api.nvim_win_get_width(main_win), vim.api.nvim_win_get_width(input_win))
     eq(vim.api.nvim_win_get_position(main_win)[1] + main_height + 1, vim.api.nvim_win_get_position(input_win)[1])
 
@@ -252,9 +277,20 @@ busted.describe("mini.codex", function()
     assert(not lsp_config, "standalone server should defer to the Neovim adapter")
   end)
 
-  busted.it("stacks floating terminal and input windows", function()
+  busted.it("uses the native input floating configuration", function()
     require("mini.codex").setup({
-      input = { enabled = true, height = 4 },
+      input = {
+        enabled = true,
+        win = {
+          relative = "editor",
+          row = 15,
+          col = 4,
+          width = 30,
+          height = 4,
+          style = "minimal",
+          border = "rounded",
+        },
+      },
       win = {
         relative = "editor",
         row = 2,
@@ -268,23 +304,47 @@ busted.describe("mini.codex", function()
     vim.cmd("Codex")
     local input_win = vim.api.nvim_get_current_win()
     local main_win = codex_win()
-    local main_position = vim.api.nvim_win_get_position(main_win)
-    local input_position = vim.api.nvim_win_get_position(input_win)
-    eq(8, vim.api.nvim_win_get_height(main_win))
+    local input_config = vim.api.nvim_win_get_config(input_win)
+    eq("editor", input_config.relative)
+    eq(15, input_config.row)
+    eq(4, input_config.col)
+    eq(30, input_config.width)
     eq(4, vim.api.nvim_win_get_height(input_win))
-    eq(main_position[1] + 10, input_position[1])
-    eq(main_position[2], input_position[2])
-    eq(vim.api.nvim_win_get_width(main_win), vim.api.nvim_win_get_width(input_win))
-
-    vim.api.nvim_win_set_height(input_win, 5)
-    vim.cmd("doautocmd WinResized")
-    eq(7, vim.api.nvim_win_get_height(main_win))
-    eq(12, vim.api.nvim_win_get_height(main_win) + vim.api.nvim_win_get_height(input_win))
+    eq("minimal", input_config.style)
+    eq(12, vim.api.nvim_win_get_height(main_win))
 
     vim.cmd("Codex toggle")
     vim.cmd("Codex toggle")
-    eq(8, vim.api.nvim_win_get_height(codex_win()))
+    eq(12, vim.api.nvim_win_get_height(codex_win()))
     eq(4, vim.api.nvim_win_get_height(vim.api.nvim_get_current_win()))
+  end)
+
+  busted.it("adapts the default input to a floating Codex window", function()
+    require("mini.codex").setup({
+      input = { enabled = true },
+      win = {
+        relative = "editor",
+        row = 2,
+        col = 4,
+        width = 30,
+        height = 12,
+        border = "rounded",
+      },
+    })
+
+    vim.cmd("Codex")
+    local input_win = vim.api.nvim_get_current_win()
+    local main_win = codex_win()
+    local input_config = vim.api.nvim_win_get_config(input_win)
+    eq("win", input_config.relative)
+    eq(main_win, input_config.win)
+    eq(vim.api.nvim_win_get_height(main_win) + 2, input_config.row)
+    eq(vim.api.nvim_win_get_width(main_win), input_config.width)
+    eq(math.max(1, math.floor(vim.o.lines * 0.3)), input_config.height)
+
+    vim.api.nvim_win_set_height(main_win, 10)
+    vim.cmd("doautocmd WinResized")
+    eq(12, vim.api.nvim_win_get_config(input_win).row)
   end)
 
   busted.it("fully replaces the terminal input from the mapping input", function()
@@ -378,9 +438,16 @@ busted.describe("mini.codex", function()
     end
   end)
 
-  busted.it("supports an absolute input height", function()
+  busted.it("uses the configured input window height", function()
     require("mini.codex").setup({
-      input = { enabled = true, height = 3 },
+      input = {
+        enabled = true,
+        win = {
+          split = "below",
+          height = 3,
+          win = 0,
+        },
+      },
       win = split_win(),
     })
 
@@ -610,6 +677,90 @@ busted.describe("mini.codex", function()
     eq("\7", sent[2][2])
   end)
 
+  busted.it("previews the latest structured Codex output", function()
+    local rollout = vim.fn.tempname() .. ".jsonl"
+    temp_files[#temp_files + 1] = rollout
+    vim.fn.writefile({
+      vim.json.encode({
+        type = "response_item",
+        payload = {
+          type = "message",
+          role = "assistant",
+          content = { { type = "output_text", text = "old answer" } },
+        },
+      }),
+      vim.json.encode({
+        type = "response_item",
+        payload = {
+          type = "message",
+          role = "assistant",
+          content = { { type = "output_text", text = "# latest\n\nvalue | preserved" } },
+        },
+      }),
+    }, rollout, "b")
+    vim.fn.system = function(args)
+      if args[#args]:find("rollout_path", 1, true) then
+        return vim.json.encode({ { rollout_path = rollout } })
+      end
+      return vim.json.encode({ { id = "only", title = "Only session" } })
+    end
+
+    require("mini.codex").setup({
+      output = {
+        enabled = true,
+        win = {
+          relative = "editor",
+          row = 1,
+          col = 2,
+          width = 40,
+          height = 8,
+          style = "minimal",
+          border = "rounded",
+        },
+      },
+      win = split_win(),
+    })
+
+    vim.cmd("Codex prev")
+    local main_win = codex_win()
+    vim.api.nvim_set_current_win(main_win)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-t>", true, false, true), "mx", false)
+
+    local output_buf = vim.api.nvim_win_get_buf(vim.api.nvim_get_current_win())
+    local output_config = vim.api.nvim_win_get_config(vim.api.nvim_get_current_win())
+    eq("editor", output_config.relative)
+    eq(1, output_config.row)
+    eq(2, output_config.col)
+    eq(40, output_config.width)
+    eq(8, output_config.height)
+    eq("minimal", output_config.style)
+    eq("markdown", vim.bo[output_buf].filetype)
+    eq("# latest\n\nvalue | preserved", table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n"))
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-r>", true, false, true), "mx", false)
+    eq("# latest\n\nvalue | preserved", table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n"))
+  end)
+
+  busted.it("opens the default output beside the Codex window", function()
+    require("mini.codex").setup({
+      output = { enabled = true },
+      win = split_win(),
+    })
+
+    vim.cmd("Codex")
+    local main_win = codex_win()
+    local main_width = vim.api.nvim_win_get_width(main_win)
+    local main_height = vim.api.nvim_win_get_height(main_win)
+    vim.api.nvim_set_current_win(main_win)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-t>", true, false, true), "mx", false)
+
+    local output_config = vim.api.nvim_win_get_config(vim.api.nvim_get_current_win())
+    eq("", output_config.relative)
+    eq("right", output_config.split)
+    eq(math.max(1, math.floor(main_width * 0.5)), output_config.width)
+    eq(main_height, output_config.height)
+  end)
+
   busted.it("does not block repeated editor requests", function()
     local sent = {}
     vim.fn.chansend = function(job, data)
@@ -662,7 +813,7 @@ busted.describe("mini.codex", function()
 
   busted.it("navigates repeatedly through sessions", function()
     vim.fn.system = function()
-      return "one|One session\ntwo|Two session\nthree|Three session\n"
+      return '[{"id":"one","title":"One session"},{"id":"two","title":"Two session"},{"id":"three","title":"Three session"}]'
     end
 
     require("mini.codex").setup({

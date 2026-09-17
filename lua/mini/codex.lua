@@ -9,16 +9,20 @@ local current_mode
 ---@type mini.codex.Config
 local DEFAULT_CONFIG = {
   win = {
-    vertical = true,
-    width = math.max(1, math.floor(vim.o.columns * 0.4)),
     win = 0,
     split = "right",
+    vertical = true,
+    width = math.max(1, math.floor(vim.o.columns * 0.5)),
   },
   input = {
     enabled = false,
     pin = true,
     prompt = "",
-    height = 0.5,
+    win = {
+      win = 0,
+      split = "below",
+      height = math.max(1, math.floor(vim.o.lines * 0.3)),
+    },
     keymap = {
       jump = "<C-g>",
       prev = "<M-p>",
@@ -27,18 +31,31 @@ local DEFAULT_CONFIG = {
     lsp = true,
     lsp_cmd = "codex-prompt-lsp",
   },
+  output = {
+    enabled = false,
+    win = {
+      win = 0,
+      split = "right",
+      vertical = true,
+    },
+    keymap = {
+      toggle = "<C-t>",
+      refresh = "<C-r>",
+    },
+  },
 }
 
 local config = vim.deepcopy(DEFAULT_CONFIG)
-local input
+local input, output
+local storage = require("mini.codex.storage")
 local setup_done = false
 
 local function input_call(method, ...)
   return input and input[method](...)
 end
 
-local joinpath = vim.fs and vim.fs.joinpath or function(base, name)
-  return base:gsub("[/\\]+$", "") .. "/" .. name
+local function output_call(method, ...)
+  return output and output[method](...)
 end
 
 local function codex_executable()
@@ -51,24 +68,7 @@ local function codex_executable()
 end
 
 local function session_list(cwd)
-  local home = vim.env.CODEX_HOME
-  local db = joinpath(vim.fn.expand(home and home ~= "" and home or "~/.codex"), "state_5.sqlite")
-  if vim.fn.filereadable(db) ~= 1 then
-    return {}
-  end
-  local sql = string.format(
-    "SELECT id, title FROM threads WHERE cwd = '%s' AND archived = 0 ORDER BY created_at DESC LIMIT 20",
-    cwd:gsub("'", "''")
-  )
-  local output = vim.fn.system({ "sqlite3", db, sql })
-  if vim.v.shell_error ~= 0 or output == "" then
-    return {}
-  end
-  local sessions = {}
-  for id, title in output:gmatch("([^\n|]+)|([^\n]*)") do
-    sessions[#sessions + 1] = { id = id, title = title }
-  end
-  return sessions
+  return storage.session_list(cwd)
 end
 
 local function configure_window()
@@ -100,6 +100,7 @@ end
 
 local function close_terminal()
   input_call("close")
+  output_call("close")
   if T.winid then
     pcall(vim.api.nvim_win_close, T.winid, true)
   end
@@ -118,6 +119,7 @@ local function wait_for_new_session(previous, cwd, token, attempt)
     if not previous[session.id] then
       T.session_id = session.id
       configure_window()
+      output_call("set_session", T.session_id, token)
       return
     end
   end
@@ -176,6 +178,7 @@ local function start_job(executable, args, token, fallback)
   T.jobid = id
   vim.b[T.bufnr].terminal_job_id = id
   configure_window()
+  output_call("attach", T.winid, T.session_id, token)
   open_input()
   return id
 end
@@ -204,12 +207,14 @@ local function start_codex(mode)
   if active and step == nil and (mode == "" or current_mode == mode) then
     if T.winid and vim.api.nvim_win_is_valid(T.winid) then
       input_call("hide")
+      output_call("hide")
       T.win_config = vim.api.nvim_win_get_config(T.winid)
       vim.api.nvim_win_hide(T.winid)
       T.winid = nil
     else
       open_terminal(T.win_config)
       open_input()
+      output_call("attach", T.winid, T.session_id, T.token)
     end
     return
   elseif active then
@@ -267,18 +272,39 @@ end
 ---@class mini.codex.Config
 ---@field win? vim.api.keyset.win_config
 ---@field input? mini.codex.InputConfig
+---@field output? mini.codex.OutputConfig
 
 ---@param opts? mini.codex.Config
 function M.setup(opts)
   opts = opts or {}
   config.win = opts.win or config.win
   if opts.input then
-    config.input = vim.tbl_deep_extend("force", config.input, opts.input)
+    local input_config = vim.tbl_deep_extend("force", config.input, opts.input)
+    if opts.input.win then
+      input_config.win = vim.deepcopy(opts.input.win)
+    end
+    config.input = input_config
     input_call("close")
     input = nil
     if config.input.enabled then
       input = require("mini.codex.input")
       input.setup(config.input)
+    end
+  end
+  if opts.output then
+    local output_config = vim.tbl_deep_extend("force", config.output, opts.output)
+    if opts.output.win then
+      output_config.win = vim.deepcopy(opts.output.win)
+    end
+    config.output = output_config
+    output_call("close")
+    output = nil
+    if config.output.enabled then
+      output = require("mini.codex.output")
+      output.setup(config.output)
+      if T.winid then
+        output.attach(T.winid, T.session_id, T.token)
+      end
     end
   end
   if setup_done then

@@ -13,7 +13,7 @@ local M = {}
 ---@field enabled? boolean
 ---@field pin? boolean
 ---@field prompt? string
----@field height? number
+---@field win? vim.api.keyset.win_config
 ---@field keymap? mini.codex.InputKeymap
 ---@field lsp? boolean
 ---@field lsp_cmd? string
@@ -21,7 +21,7 @@ local M = {}
 ---@class mini.codex.InputState
 ---@field pin boolean
 ---@field prompt string
----@field height number
+---@field win vim.api.keyset.win_config
 ---@field keymap mini.codex.InputKeymap
 ---@field lsp boolean
 ---@field lsp_cmd string
@@ -30,7 +30,11 @@ local M = {}
 local defaults = {
   pin = true,
   prompt = "",
-  height = 0.5,
+  win = {
+    win = 0,
+    split = "below",
+    height = math.max(1, math.floor(vim.o.lines * 0.3)),
+  },
   keymap = {
     jump = "<C-g>",
     prev = "<M-p>",
@@ -54,7 +58,8 @@ local history_active = false
 local history_dispatch_scheduled = false
 local closing_editor_path
 local lsp_client_id
-local float_config, float_heights
+local adaptive_float = false
+local syncing_float = false
 local available = true
 
 local function buffer_text()
@@ -88,76 +93,63 @@ local function show_prompt()
   })
 end
 
-local function input_height(total)
-  local height = config.height <= 1 and math.floor(total * config.height) or config.height
-  return math.max(1, math.min(height, total - 1))
+local function border_height(win_config)
+  return win_config.border and win_config.border ~= "none" and 2 or 0
 end
 
-local function float_position()
-  local position = vim.api.nvim_win_get_position(main_winid)
-  local border = vim.api.nvim_win_get_config(main_winid).border
-  return position[1] + float_heights[1] + (border == "none" and 0 or 2), position[2]
+local function adaptive_float_config(opts, main_config)
+  local row_offset = opts.relative == "win" and opts.row or 0
+  opts.relative = "win"
+  if not opts.win or opts.win == 0 then
+    opts.win = main_winid
+  end
+  opts.row = main_config.height + border_height(main_config) + (row_offset or 0)
+  opts.col = opts.col or 0
+  opts.width = opts.width or main_config.width
+  opts.split, opts.vertical = nil, nil
+  return opts
 end
 
 local function sync_float()
-  if not float_heights or not vim.api.nvim_win_is_valid(main_winid) or not vim.api.nvim_win_is_valid(winid) then
+  if
+    not adaptive_float
+    or syncing_float
+    or not main_winid
+    or not winid
+    or not vim.api.nvim_win_is_valid(main_winid)
+    or not vim.api.nvim_win_is_valid(winid)
+  then
     return
   end
-  local main_height, height = vim.api.nvim_win_get_height(main_winid), vim.api.nvim_win_get_height(winid)
-  if height ~= float_heights[2] then
-    height = math.max(1, math.min(height, float_heights[3] - 1))
-    main_height = float_heights[3] - height
-    vim.api.nvim_win_set_height(main_winid, main_height)
-  elseif main_height ~= float_heights[1] then
-    main_height = math.max(1, math.min(main_height, float_heights[3] - 1))
-    height = float_heights[3] - main_height
-    vim.api.nvim_win_set_height(winid, height)
-  end
-  float_heights[1], float_heights[2] = main_height, height
-  local row, col = float_position()
-  vim.api.nvim_win_set_config(winid, { relative = "editor", row = row, col = col })
-end
-
-local function open_float(main_config)
-  local total = main_config.height
-  local position = vim.api.nvim_win_get_position(main_winid)
-  local height = input_height(total)
-  float_config = vim.deepcopy(main_config)
-  main_config = vim.tbl_extend("force", main_config, {
-    anchor = "NW",
-    relative = "editor",
-    row = position[1],
-    col = position[2],
-    height = total - height,
+  syncing_float = true
+  local main_config = vim.api.nvim_win_get_config(main_winid)
+  local opts = adaptive_float_config(vim.deepcopy(config.win or {}), main_config)
+  vim.api.nvim_win_set_config(winid, {
+    relative = opts.relative,
+    win = opts.win,
+    row = opts.row,
+    col = opts.col,
+    width = opts.width,
   })
-  main_config.win, main_config.bufpos = nil, nil
-  vim.api.nvim_win_set_config(main_winid, main_config)
-  float_heights = { main_config.height, height, total }
-
-  local row, col = float_position()
-  return vim.api.nvim_open_win(bufnr, true, {
-    relative = "editor",
-    row = row,
-    col = col,
-    width = main_config.width,
-    height = height,
-    style = main_config.style,
-    border = main_config.border,
-    zindex = main_config.zindex,
-  })
+  syncing_float = false
 end
 
 local function show_input()
   if winid and vim.api.nvim_win_is_valid(winid) then
     return winid
   end
+  local opts = vim.deepcopy(config.win or {})
   local main_config = vim.api.nvim_win_get_config(main_winid)
-  winid = main_config.relative ~= "" and open_float(main_config)
-    or vim.api.nvim_open_win(bufnr, true, {
-      win = main_winid,
-      split = "below",
-      height = input_height(vim.api.nvim_win_get_height(main_winid)),
-    })
+  adaptive_float = false
+  if opts.relative == "win" or (main_config.relative ~= "" and (opts.relative == nil or opts.relative == "")) then
+    opts = adaptive_float_config(opts, main_config)
+    adaptive_float = true
+  elseif opts.relative == nil or opts.relative == "" then
+    if not opts.win or opts.win == 0 then
+      opts.win = main_winid
+    end
+  end
+  winid = vim.api.nvim_open_win(bufnr, true, opts)
   return winid
 end
 
@@ -165,11 +157,8 @@ function M.hide()
   if winid and vim.api.nvim_win_is_valid(winid) then
     vim.api.nvim_win_hide(winid)
   end
-  if float_config and main_winid and vim.api.nvim_win_is_valid(main_winid) then
-    vim.api.nvim_win_set_config(main_winid, float_config)
-  end
   winid = nil
-  float_config, float_heights = nil, nil
+  adaptive_float = false
 end
 
 ---@param mode mini.codex.EditorMode
@@ -251,7 +240,11 @@ M._history = request_history
 
 ---@param opts? mini.codex.InputConfig
 function M.setup(opts)
-  config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {}) --[[@as mini.codex.InputState]]
+  opts = opts or {}
+  config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts) --[[@as mini.codex.InputState]]
+  if opts.win then
+    config.win = vim.deepcopy(opts.win)
+  end
   available = true
 end
 
@@ -354,11 +347,6 @@ function M.open(main_win, jobid_fn)
   if not available or not main_win or not vim.api.nvim_win_is_valid(main_win) then
     return
   end
-  local main_config = vim.api.nvim_win_get_config(main_win)
-  if main_config.relative ~= "" and main_config.height < 2 then
-    vim.notify("mini.codex input requires a window height of at least 2", vim.log.levels.ERROR)
-    return
-  end
   main_winid, get_jobid = main_win, jobid_fn or get_jobid
   if winid and vim.api.nvim_win_is_valid(winid) then
     return winid
@@ -431,8 +419,9 @@ function M.close()
   bufnr, main_winid, get_jobid, pending, replacement, editor_path, closing_editor_path =
     nil, nil, nil, nil, nil, nil, nil
   history_queue, history_active, history_dispatch_scheduled = {}, false, false
+  adaptive_float, syncing_float = false, false
 end
 
-vim.api.nvim_create_autocmd("WinResized", { callback = sync_float })
+vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, { callback = sync_float })
 
 return M
