@@ -33,6 +33,7 @@ local main_bound_keys = {}
 local output_bound_keys = {}
 local adaptive_window = false
 local syncing_window = false
+local output_title = "Codex output"
 
 local function is_valid_window(win)
   return win and vim.api.nvim_win_is_valid(win)
@@ -44,7 +45,7 @@ local function set_window_options(win)
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false
   vim.wo[win].signcolumn = "no"
-  vim.wo[win].winbar = "Codex output"
+  vim.wo[win].winbar = output_title
 end
 
 local function clear_keymaps(buf, bound_keys, modes)
@@ -99,6 +100,49 @@ local function set_buffer_name()
   end
 end
 
+local function compact_text(text, max_chars)
+  local compact = vim.trim(text:gsub("%s+", " "))
+  if vim.fn.strchars(compact) > max_chars then
+    return vim.fn.strcharpart(compact, 0, max_chars - 1) .. "…"
+  end
+  return compact
+end
+
+local function set_output_title(turns)
+  local latest = turns[#turns]
+  if not latest then
+    output_title = "Codex output"
+  else
+    local question = compact_text(latest.question, 60)
+    question = question:gsub("%%", "%%%%")
+    output_title = question == "" and string.format("Codex output · turn %d/%d", latest.turn, #turns)
+      or string.format("Codex output · turn %d/%d · for %s", latest.turn, #turns, question)
+  end
+  if is_valid_window(winid) then
+    vim.wo[winid].winbar = output_title
+  end
+end
+
+local function render_history(turns)
+  if #turns == 0 then
+    return { "No Codex output available yet." }
+  end
+  local lines = {}
+  for index, turn in ipairs(turns) do
+    if index > 1 then
+      vim.list_extend(lines, { "", "---", "" })
+    end
+    local question = compact_text(turn.question, 80)
+    local heading = string.format("## Turn %d", turn.turn)
+    if question ~= "" then
+      heading = heading .. " · for " .. question
+    end
+    vim.list_extend(lines, { heading, "" })
+    vim.list_extend(lines, vim.split(turn.response, "\n", { plain = true }))
+  end
+  return lines
+end
+
 local function ensure_buffer()
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     return bufnr
@@ -114,10 +158,12 @@ local function ensure_buffer()
   return bufnr
 end
 
-local function set_text(text)
+---@param turns mini.codex.OutputTurn[]
+local function set_text(turns)
   ensure_buffer()
   set_buffer_name()
-  local lines = text and vim.split(text, "\n", { plain = true }) or { "No Codex output available yet." }
+  local lines = render_history(turns)
+  set_output_title(turns)
   vim.bo[bufnr].modifiable = true
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
   vim.bo[bufnr].modified = false
@@ -225,7 +271,7 @@ function M.hide()
 end
 
 ---@param token integer?
----@return string?
+---@return mini.codex.OutputTurn[]?
 function M.refresh(token)
   if not config.enabled then
     return
@@ -233,9 +279,9 @@ function M.refresh(token)
   if token and session_token and token ~= session_token then
     return
   end
-  local text = storage.latest_output(session_id)
-  set_text(text)
-  return text
+  local turns = storage.output_history(session_id)
+  set_text(turns)
+  return turns
 end
 
 function M.show()
@@ -312,6 +358,7 @@ function M.close()
   bufnr, main_winid, main_bufnr, session_id, session_token = nil, nil, nil, nil, nil
   main_bound_keys, output_bound_keys = {}, {}
   adaptive_window, syncing_window = false, false
+  output_title = "Codex output"
 end
 
 vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, { callback = sync_window })

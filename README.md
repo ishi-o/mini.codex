@@ -183,7 +183,7 @@ require("mini.codex").setup(opts)
 
 ## Output preview (optional)
 
-The optional output preview displays the current Codex response in a dedicated read-only window. It is disabled by default.
+The optional output preview displays the response history of the active Codex session in a dedicated read-only window. It is disabled by default. Each turn includes its question and response, and the window title identifies the latest turn.
 
 Enable it with an `output` table:
 
@@ -211,7 +211,7 @@ local opts = {
 require("mini.codex").setup(opts)
 ```
 
-The `output.win` table uses Neovim's native window configuration. By default, the preview is a split to the right of the Codex window, with a width of 50% of the Codex window's width and the same height. An explicit `width` or `height` overrides the default. For a floating preview, use `relative = "editor"` with the desired position and dimensions. The toggle key opens or hides the preview, and the refresh key (default `<C-r>`) updates the preview.
+The `output.win` table uses Neovim's native window configuration. By default, the preview is a split to the right of the Codex window, with a width of 50% of the Codex window's width and the same height. An explicit `width` or `height` overrides the default. For a floating preview, use `relative = "editor"` with the desired position and dimensions. The toggle key opens or hides the preview, and the refresh key (default `<C-r>`) updates the response history.
 
 ## Commands
 

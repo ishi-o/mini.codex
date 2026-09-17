@@ -678,10 +678,18 @@ busted.describe("mini.codex", function()
     eq("\7", sent[2][2])
   end)
 
-  busted.it("previews the latest structured Codex output", function()
+  busted.it("previews the Codex response history", function()
     local rollout = vim.fn.tempname() .. ".jsonl"
     temp_files[#temp_files + 1] = rollout
     vim.fn.writefile({
+      vim.json.encode({
+        type = "response_item",
+        payload = {
+          type = "message",
+          role = "user",
+          content = { { type = "input_text", text = "old question" } },
+        },
+      }),
       vim.json.encode({
         type = "response_item",
         payload = {
@@ -691,11 +699,25 @@ busted.describe("mini.codex", function()
         },
       }),
       vim.json.encode({
-        type = "response_item",
+        type = "event_msg",
         payload = {
-          type = "message",
-          role = "assistant",
-          content = { { type = "output_text", text = "# latest\n\nvalue | preserved" } },
+          type = "item_completed",
+          turn_id = "turn-2",
+          item = {
+            type = "user_message",
+            content = { { type = "input_text", text = "latest question" } },
+          },
+        },
+      }),
+      vim.json.encode({
+        type = "event_msg",
+        payload = {
+          type = "item_completed",
+          turn_id = "turn-2",
+          item = {
+            type = "agent_message",
+            content = { { type = "output_text", text = "# latest\n\nvalue | preserved" } },
+          },
         },
       }),
     }, rollout, "b")
@@ -735,11 +757,18 @@ busted.describe("mini.codex", function()
     eq(40, output_config.width)
     eq(8, output_config.height)
     eq("minimal", output_config.style)
+    eq("Codex output · turn 2/2 · for latest question", vim.wo[vim.api.nvim_get_current_win()].winbar)
     eq("markdown", vim.bo[output_buf].filetype)
-    eq("# latest\n\nvalue | preserved", table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n"))
+    eq(
+      "## Turn 1 · for old question\n\nold answer\n\n---\n\n## Turn 2 · for latest question\n\n# latest\n\nvalue | preserved",
+      table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n")
+    )
 
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-r>", true, false, true), "mx", false)
-    eq("# latest\n\nvalue | preserved", table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n"))
+    eq(
+      "## Turn 1 · for old question\n\nold answer\n\n---\n\n## Turn 2 · for latest question\n\n# latest\n\nvalue | preserved",
+      table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n")
+    )
   end)
 
   busted.it("opens the default output beside the Codex window", function()

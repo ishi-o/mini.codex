@@ -4,6 +4,12 @@ local M = {}
 ---@field id string
 ---@field title string
 
+---@class mini.codex.OutputTurn
+---@field turn integer
+---@field question string
+---@field response string
+---@field turn_id string?
+
 local joinpath = vim.fs and vim.fs.joinpath or function(base, name)
   return base:gsub("[/\\]+$", "") .. "/" .. name
 end
@@ -107,24 +113,93 @@ local function content_text(content)
   return #parts > 0 and table.concat(parts, "\n") or nil
 end
 
-local function record_text(record)
+local function message_from_table(value, turn_id)
+  if type(value) ~= "table" then
+    return
+  end
+  local role = value.role
+  local kind = value.type
+  local text
+  if role == "user" or role == "assistant" then
+    text = content_text(value.content or value.text or value.message)
+  elseif kind == "user_message" or kind == "userMessage" then
+    role = "user"
+    text = content_text(value.message or value.text or value.content)
+  elseif
+    kind == "agent_message"
+    or kind == "agentMessage"
+    or kind == "assistant_message"
+    or kind == "assistantMessage"
+  then
+    role = "assistant"
+    text = content_text(value.message or value.text or value.content)
+  end
+  if not role or not text or text == "" then
+    return
+  end
+  return role, text, turn_id or value.turn_id
+end
+
+local function record_message(record)
   local payload = type(record.payload) == "table" and record.payload or record
   if type(payload) ~= "table" then
     return
   end
+  local turn_id = payload.turn_id or record.turn_id
+  if payload.item then
+    local role, text, item_turn_id = message_from_table(payload.item, turn_id)
+    if role then
+      return role, text, item_turn_id
+    end
+  end
+  return message_from_table(payload, turn_id)
+end
 
-  if payload.role == "assistant" then
-    return content_text(payload.content or payload.text or payload.message)
+local function add_message(messages, role, text, turn_id)
+  local previous = messages[#messages]
+  if previous and previous.role == role and previous.text == text then
+    return
+  end
+  messages[#messages + 1] = { role = role, text = text, turn_id = turn_id }
+end
+
+local function make_turns(messages)
+  local turns = {}
+  local current
+
+  local function finish()
+    if current and current.response ~= "" then
+      turns[#turns + 1] = {
+        turn = #turns + 1,
+        question = current.question,
+        response = current.response,
+        turn_id = current.turn_id,
+      }
+    end
+    current = nil
   end
 
-  if
-    payload.type == "agent_message"
-    or payload.type == "agentMessage"
-    or payload.type == "assistant_message"
-    or payload.type == "assistantMessage"
-  then
-    return content_text(payload.message or payload.text or payload.content)
+  for _, message in ipairs(messages) do
+    if message.role == "user" then
+      finish()
+      current = { question = message.text, response = "", turn_id = message.turn_id }
+    elseif message.role == "assistant" then
+      if not current then
+        current = { question = "", response = "", turn_id = message.turn_id }
+      elseif message.turn_id and current.turn_id and message.turn_id ~= current.turn_id then
+        finish()
+        current = { question = "", response = "", turn_id = message.turn_id }
+      elseif message.turn_id and not current.turn_id then
+        current.turn_id = message.turn_id
+      end
+      if current.response ~= "" then
+        current.response = current.response .. "\n\n"
+      end
+      current.response = current.response .. message.text
+    end
   end
+  finish()
+  return turns
 end
 
 local function read_rollout(path)
@@ -132,27 +207,35 @@ local function read_rollout(path)
   if not ok or type(lines) ~= "table" then
     return
   end
-  local latest
+  local messages = {}
   for _, line in ipairs(lines) do
     local decoded, record = pcall(vim.json.decode, line)
     if decoded and type(record) == "table" then
-      local text = record_text(record)
-      if type(text) == "string" and text ~= "" then
-        latest = text
+      local role, text, turn_id = record_message(record)
+      if role then
+        add_message(messages, role, text, turn_id)
       end
     end
   end
-  return latest
+  return make_turns(messages)
+end
+
+---@param thread_id string?
+---@return mini.codex.OutputTurn[]
+function M.output_history(thread_id)
+  if type(thread_id) ~= "string" or thread_id == "" then
+    return {}
+  end
+  local path = rollout_path(thread_id)
+  return path and read_rollout(path) or {}
 end
 
 ---@param thread_id string?
 ---@return string?
 function M.latest_output(thread_id)
-  if type(thread_id) ~= "string" or thread_id == "" then
-    return
-  end
-  local path = rollout_path(thread_id)
-  return path and read_rollout(path) or nil
+  local history = M.output_history(thread_id)
+  local latest = history[#history]
+  return latest and latest.response or nil
 end
 
 return M
