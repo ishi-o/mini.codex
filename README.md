@@ -61,6 +61,8 @@ local DEFAULT_CONFIG = {
 		prompt = "",
 		height = 0.5,
 		jump_key = "<C-g>",
+		lsp = true,
+		lsp_cmd = "codex-prompt-lsp",
 	},
 }
 ```
@@ -92,12 +94,42 @@ Codex's built-in Vim mode is too limited for full Neovim editing workflows, so m
 
 The two panes share the original Codex window height in both split and floating layouts. Resize either one with `nvim_win_set_height()` and the other adjusts automatically.
 
-The buffer uses the `markdown.codex` filetype, allowing [nvim-codex-lsp](https://github.com/ishi-o/nvim-codex-lsp) to attach automatically and provide completions.
+The buffer uses the `markdown.codex` filetype, allowing the [codex-prompt-lsp](https://github.com/ishi-o/codex-prompt-lsp) Neovim adapter to attach automatically and provide completions. The adapter is optional; mini.codex does not depend on it.
+
+If you are migrating from `ishi-o/nvim-codex-lsp`, change the plugin source to
+`ishi-o/codex-prompt-lsp`; the Neovim adapter's `require("nvim-codex-lsp")`
+module name remains unchanged.
 
 - `Enter` behaves normally, so it inserts a newline in insert mode and never submits to Codex.
 - The sync key (default `<C-g>`) opens the mapping input with Codex's complete current draft. Press it again to replace Codex's draft with the edited text and return to the terminal.
 
 Synchronization uses Codex's external-editor support inside the current Neovim instance. The plugin sets `VISUAL` only for the Codex process.
+
+### Standalone LSP server (optional)
+
+The input pane automatically attaches the editor-neutral
+`codex-prompt-lsp --stdio` executable when it is available. Install
+`codex-prompt-lsp` with npm or Mason; no additional configuration is needed:
+
+```lua
+---@type mini.codex.Config
+local opts = {
+	input = {
+		enabled = true,
+	},
+}
+
+require("mini.codex").setup(opts)
+```
+
+This standalone integration provides the server's completions and hover
+information. It deliberately does not enable the Neovim adapter's mention
+highlighting or atomic completion deletion. The `lsp` option defaults to
+`true`, but has no effect when `nvim-codex-lsp` can be loaded: mini.codex
+always leaves server startup to that adapter. The adapter provides the richer
+integration, including Codex buffer detection, mention highlighting, and
+atomic completion deletion. Set `lsp = false` to disable standalone startup,
+or set `lsp_cmd` when the executable is not named `codex-prompt-lsp`.
 
 Enable and configure it with the `input` table. Set `input.enabled = false` to disable it again:
 
@@ -110,6 +142,8 @@ local opts = {
 		prompt = "",
 		height = 0.5, -- fraction of the Codex window height, or absolute rows (> 1)
 		jump_key = "<C-g>", -- key that synchronizes and switches inputs
+		lsp = true, -- attach codex-prompt-lsp --stdio when available
+		lsp_cmd = "codex-prompt-lsp",
 	},
 }
 

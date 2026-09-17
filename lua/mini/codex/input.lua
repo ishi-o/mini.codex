@@ -7,18 +7,30 @@ local M = {}
 ---@field prompt? string
 ---@field height? number
 ---@field jump_key? string
+---@field lsp? boolean
+---@field lsp_cmd? string
 
 ---@class mini.codex.InputState
 ---@field pin boolean
 ---@field prompt string
 ---@field height number
 ---@field jump_key string
+---@field lsp boolean
+---@field lsp_cmd string
 
 ---@type mini.codex.InputState
-local defaults = { pin = true, prompt = "", height = 0.5, jump_key = "<C-g>" }
+local defaults = {
+  pin = true,
+  prompt = "",
+  height = 0.5,
+  jump_key = "<C-g>",
+  lsp = true,
+  lsp_cmd = "codex-prompt-lsp",
+}
 local config = vim.deepcopy(defaults)
 local namespace = vim.api.nvim_create_namespace("mini.codex.input")
 local bufnr, winid, main_winid, get_jobid, pending, replacement, editor_path
+local lsp_client_id
 local float_config, float_heights
 local show_input
 local available = true
@@ -93,6 +105,31 @@ M._apply = apply
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {}) --[[@as mini.codex.InputState]]
   available = true
+end
+
+local function start_lsp(buf)
+  if not config.lsp or not vim.lsp or not vim.lsp.start then
+    return
+  end
+  if pcall(require, "nvim-codex-lsp") then
+    return
+  end
+  local executable = vim.fn.exepath(config.lsp_cmd)
+  if executable == "" then
+    return
+  end
+  if vim.lsp.get_configs and vim.lsp.get_configs()["codex-prompt"] then
+    return
+  end
+  if #vim.lsp.get_clients({ bufnr = buf, name = "codex-prompt" }) > 0 then
+    return
+  end
+  lsp_client_id = vim.lsp.start({
+    name = "codex-prompt",
+    cmd = { executable, "--stdio" },
+    root_dir = vim.fn.getcwd(),
+    bufnr = buf,
+  })
 end
 
 ---@param main_win integer
@@ -251,6 +288,7 @@ function M.open(main_win, jobid_fn)
       end,
     })
     vim.bo[bufnr].filetype = "markdown.codex"
+    start_lsp(bufnr)
     vim.api.nvim_create_autocmd("WinLeave", {
       buffer = bufnr,
       callback = function()
@@ -291,6 +329,13 @@ end
 
 function M.close()
   M.hide()
+  if lsp_client_id then
+    local client = vim.lsp.get_client_by_id(lsp_client_id)
+    if client then
+      client:stop()
+    end
+    lsp_client_id = nil
+  end
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
   end

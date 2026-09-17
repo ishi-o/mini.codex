@@ -7,7 +7,7 @@ local function eq(expected, actual)
 end
 
 busted.describe("mini.codex", function()
-  local jobs, stops, notices, temp_files, job_opts
+  local jobs, stops, notices, temp_files, job_opts, lsp_config
   local original
 
   local function split_win()
@@ -34,7 +34,7 @@ busted.describe("mini.codex", function()
     pcall(vim.cmd, "Codex stop")
     vim.o.swapfile = false
 
-    jobs, stops, notices, temp_files, job_opts = 0, 0, {}, {}, nil
+    jobs, stops, notices, temp_files, job_opts, lsp_config = 0, 0, {}, {}, nil, nil
     original = {
       codex_home = vim.env.CODEX_HOME,
       exepath = vim.fn.exepath,
@@ -47,6 +47,10 @@ busted.describe("mini.codex", function()
       pumvisible = vim.fn.pumvisible,
       serverstart = vim.fn.serverstart,
       system = vim.fn.system,
+      lsp_start = vim.lsp.start,
+      lsp_get_clients = vim.lsp.get_clients,
+      lsp_get_configs = vim.lsp.get_configs,
+      nvim_codex_lsp = package.loaded["nvim-codex-lsp"],
     }
 
     vim.env.CODEX_HOME = vim.fn.tempname()
@@ -78,7 +82,9 @@ busted.describe("mini.codex", function()
 
   busted.after_each(function()
     pcall(vim.cmd, "Codex stop")
-    require("mini.codex").setup({ input = { enabled = false, pin = true } })
+    require("mini.codex").setup({
+      input = { enabled = false, pin = true, lsp = true, lsp_cmd = "codex-prompt-lsp" },
+    })
     vim.env.CODEX_HOME = original.codex_home or ""
     vim.fn.exepath = original.exepath
     vim.fn.filereadable = original.filereadable
@@ -90,6 +96,10 @@ busted.describe("mini.codex", function()
     vim.fn.pumvisible = original.pumvisible
     vim.fn.serverstart = original.serverstart
     vim.fn.system = original.system
+    vim.lsp.start = original.lsp_start
+    vim.lsp.get_clients = original.lsp_get_clients
+    vim.lsp.get_configs = original.lsp_get_configs
+    package.loaded["nvim-codex-lsp"] = original.nvim_codex_lsp
     for _, path in ipairs(temp_files) do
       vim.fn.delete(path)
     end
@@ -178,6 +188,58 @@ busted.describe("mini.codex", function()
 
     vim.api.nvim_win_set_height(input_win, input_height + 1)
     eq(total_height, vim.api.nvim_win_get_height(main_win) + vim.api.nvim_win_get_height(input_win) + 1)
+  end)
+
+  busted.it("can attach the standalone prompt LSP server", function()
+    vim.fn.exepath = function(command)
+      return command == "codex" and "/bin/codex"
+        or command == "codex-prompt-lsp" and "/bin/codex-prompt-lsp"
+        or original.exepath(command)
+    end
+    vim.lsp.get_configs = function()
+      return {}
+    end
+    vim.lsp.get_clients = function()
+      return {}
+    end
+    vim.lsp.start = function(config)
+      lsp_config = config
+    end
+
+    require("mini.codex").setup({
+      input = { enabled = true, lsp = true },
+      win = split_win(),
+    })
+
+    vim.cmd("Codex")
+    eq("codex-prompt", lsp_config.name)
+    eq("/bin/codex-prompt-lsp", lsp_config.cmd[1])
+    eq("--stdio", lsp_config.cmd[2])
+    eq(vim.fn.getcwd(), lsp_config.root_dir)
+    eq(vim.api.nvim_get_current_buf(), lsp_config.bufnr)
+  end)
+
+  busted.it("defers to the Neovim adapter when it is installed", function()
+    package.loaded["nvim-codex-lsp"] = {}
+    vim.fn.exepath = function(command)
+      return command == "codex" and "/bin/codex"
+        or command == "codex-prompt-lsp" and "/bin/codex-prompt-lsp"
+        or original.exepath(command)
+    end
+    vim.lsp.get_clients = function()
+      return {}
+    end
+    vim.lsp.start = function(config)
+      lsp_config = config
+    end
+
+    require("mini.codex").setup({
+      input = { enabled = true, lsp = true },
+      win = split_win(),
+    })
+
+    vim.cmd("Codex")
+    assert(not lsp_config, "standalone server should defer to the Neovim adapter")
   end)
 
   busted.it("stacks floating terminal and input windows", function()

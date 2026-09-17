@@ -16,6 +16,8 @@ local DEFAULT_CONFIG = {
     prompt = "",
     height = 0.5,
     jump_key = "<C-g>",
+    lsp = true,
+    lsp_cmd = "codex-prompt-lsp",
   },
 }
 
