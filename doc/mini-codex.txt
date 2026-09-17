@@ -65,7 +65,11 @@ The complete default configuration is:
             pin = true,
             prompt = "",
             height = 0.5,
-            jump_key = "<C-g>",
+            keymap = {
+                jump = "<C-g>",
+                prev = "<M-p>",
+                next = "<M-n>",
+            },
             lsp = true,
             lsp_cmd = "codex-prompt-lsp",
         },
@@ -117,6 +121,7 @@ module name remains unchanged.
 
 - `Enter` behaves normally, so it inserts a newline in insert mode and never submits to Codex.
 - The sync key (default `<C-g>`) opens the mapping input with Codex’s complete current draft. Press it again to replace Codex’s draft with the edited text and return to the terminal.
+- The previous and next keys (defaults `<M-p>` and `<M-n>`) use Codex’s own Up/Down prompt history and load the selected prompt into the mapping input.
 
 Synchronization uses Codex’s external-editor support inside the current
 Neovim instance. The plugin sets `VISUAL` only for the Codex process.
@@ -158,7 +163,11 @@ disable it again:
             pin = true, -- keep the input pane visible when it is not focused
             prompt = "",
             height = 0.5, -- fraction of the Codex window height, or absolute rows (> 1)
-            jump_key = "<C-g>", -- key that synchronizes and switches inputs
+            keymap = {
+                jump = "<C-g>", -- key that synchronizes and switches inputs
+                prev = "<M-p>", -- select the previous Codex prompt
+                next = "<M-n>", -- select the next Codex prompt
+            },
             lsp = true, -- attach codex-prompt-lsp --stdio when available
             lsp_cmd = "codex-prompt-lsp",
         },

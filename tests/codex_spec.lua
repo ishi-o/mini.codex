@@ -83,7 +83,17 @@ busted.describe("mini.codex", function()
   busted.after_each(function()
     pcall(vim.cmd, "Codex stop")
     require("mini.codex").setup({
-      input = { enabled = false, pin = true, lsp = true, lsp_cmd = "codex-prompt-lsp" },
+      input = {
+        enabled = false,
+        pin = true,
+        lsp = true,
+        lsp_cmd = "codex-prompt-lsp",
+        keymap = {
+          jump = "<C-g>",
+          prev = "<M-p>",
+          next = "<M-n>",
+        },
+      },
     })
     vim.env.CODEX_HOME = original.codex_home or ""
     vim.fn.exepath = original.exepath
@@ -455,6 +465,96 @@ busted.describe("mini.codex", function()
     eq("edited", table.concat(vim.fn.readfile(path, "b"), "\n"))
   end)
 
+  busted.it("copies Codex history into the mapping input", function()
+    local sent = {}
+    vim.fn.chansend = function(job, data)
+      sent[#sent + 1] = { job, data }
+    end
+
+    require("mini.codex").setup({
+      input = {
+        enabled = true,
+        keymap = { prev = "<F5>", next = "<F6>" },
+      },
+      win = split_win(),
+    })
+
+    vim.cmd("Codex")
+    local input_win = vim.api.nvim_get_current_win()
+    local input_buf = vim.api.nvim_win_get_buf(input_win)
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F5>", true, false, true), "mx", false)
+    eq("\27[A", sent[1][2])
+    eq("\7", sent[2][2])
+
+    local path = open_editor("last confirmed input")
+    vim.wait(500, function()
+      return vim.api.nvim_get_current_win() == input_win
+    end, 10)
+    eq("last confirmed input", vim.api.nvim_buf_get_lines(input_buf, 0, 1, false)[1])
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F5>", true, false, true), "mx", false)
+    eq(2, #sent)
+    assert(require("mini.codex.input")._editor_done(path), "first history editor should be released")
+    vim.wait(500, function()
+      return #sent == 4
+    end, 10)
+    eq("\27[A", sent[3][2])
+    eq("\7", sent[4][2])
+
+    path = open_editor("older confirmed input")
+    vim.wait(500, function()
+      return vim.api.nvim_get_current_win() == input_win
+    end, 10)
+    eq("older confirmed input", vim.api.nvim_buf_get_lines(input_buf, 0, 1, false)[1])
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F5>", true, false, true), "mx", false)
+    eq(4, #sent)
+    assert(require("mini.codex.input")._editor_done(path), "second history editor should be released")
+    vim.wait(500, function()
+      return #sent == 6
+    end, 10)
+    eq("\27[A", sent[5][2])
+    eq("\7", sent[6][2])
+
+    path = open_editor("oldest confirmed input")
+    vim.wait(500, function()
+      return vim.api.nvim_get_current_win() == input_win
+    end, 10)
+    eq("oldest confirmed input", vim.api.nvim_buf_get_lines(input_buf, 0, 1, false)[1])
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F6>", true, false, true), "mx", false)
+    eq(6, #sent)
+    assert(require("mini.codex.input")._editor_done(path), "third history editor should be released")
+    vim.wait(500, function()
+      return #sent == 8
+    end, 10)
+    eq("\27[B", sent[7][2])
+    eq("\7", sent[8][2])
+
+    path = open_editor("older confirmed input")
+    vim.wait(500, function()
+      return vim.api.nvim_get_current_win() == input_win
+    end, 10)
+    eq("older confirmed input", vim.api.nvim_buf_get_lines(input_buf, 0, 1, false)[1])
+
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F6>", true, false, true), "mx", false)
+    eq(8, #sent)
+    assert(require("mini.codex.input")._editor_done(path), "fourth history editor should be released")
+    vim.wait(500, function()
+      return #sent == 10
+    end, 10)
+    eq("\27[B", sent[9][2])
+    eq("\7", sent[10][2])
+
+    path = open_editor("last confirmed input")
+    vim.wait(500, function()
+      return vim.api.nvim_get_current_win() == input_win
+    end, 10)
+    eq("last confirmed input", vim.api.nvim_buf_get_lines(input_buf, 0, 1, false)[1])
+    assert(require("mini.codex.input")._editor_done(path), "history editor helper should be released")
+  end)
+
   busted.it("uses Enter only to edit the mapping input", function()
     local sent
     vim.fn.chansend = function(job, data)
@@ -558,5 +658,39 @@ busted.describe("mini.codex", function()
     vim.cmd("Codex stop")
     vim.cmd("Codex next")
     eq(2, jobs)
+  end)
+
+  busted.it("navigates repeatedly through sessions", function()
+    vim.fn.system = function()
+      return "one|One session\ntwo|Two session\nthree|Three session\n"
+    end
+
+    require("mini.codex").setup({
+      win = split_win(),
+    })
+
+    vim.cmd("Codex prev")
+    eq(1, jobs)
+    eq("Codex [one]", vim.wo[codex_win()].winbar)
+
+    vim.cmd("Codex prev")
+    eq(2, jobs)
+    eq(1, stops)
+    eq("Codex [two]", vim.wo[codex_win()].winbar)
+
+    vim.cmd("Codex prev")
+    eq(3, jobs)
+    eq(2, stops)
+    eq("Codex [three]", vim.wo[codex_win()].winbar)
+
+    vim.cmd("Codex next")
+    eq(4, jobs)
+    eq(3, stops)
+    eq("Codex [two]", vim.wo[codex_win()].winbar)
+
+    vim.cmd("Codex next")
+    eq(5, jobs)
+    eq(4, stops)
+    eq("Codex [one]", vim.wo[codex_win()].winbar)
   end)
 end)

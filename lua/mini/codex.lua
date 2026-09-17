@@ -1,6 +1,10 @@
 local M = {}
 
+---@alias mini.codex.Mode ""|"new"|"last"|"pick"|"prev"|"next"
+
 local T = { next_token = 0 }
+---@type mini.codex.Mode?
+local current_mode
 
 ---@type mini.codex.Config
 local DEFAULT_CONFIG = {
@@ -15,7 +19,11 @@ local DEFAULT_CONFIG = {
     pin = true,
     prompt = "",
     height = 0.5,
-    jump_key = "<C-g>",
+    keymap = {
+      jump = "<C-g>",
+      prev = "<M-p>",
+      next = "<M-n>",
+    },
     lsp = true,
     lsp_cmd = "codex-prompt-lsp",
   },
@@ -120,7 +128,8 @@ end
 
 local function clear()
   close_terminal()
-  T.jobid, T.token, T.type, T.current_session_idx, T.session_id = nil, nil, nil, nil, nil
+  T.jobid, T.token, T.current_session_idx, T.session_id = nil, nil, nil, nil
+  current_mode = nil
 end
 
 local function new_token()
@@ -128,10 +137,16 @@ local function new_token()
   return T.token
 end
 
-local stop_codex
-local start_job
+local function stop_codex()
+  local id = T.jobid
+  T.next_token, T.token, T.jobid = T.next_token + 1, nil, nil
+  if id and id > 0 then
+    vim.fn.jobstop(id)
+  end
+  clear()
+end
 
-start_job = function(executable, args, token, fallback)
+local function start_job(executable, args, token, fallback)
   local id = vim.fn.jobstart(vim.list_extend({ executable }, args), {
     env = input_call("env", T.winid),
     pty = true,
@@ -165,6 +180,7 @@ start_job = function(executable, args, token, fallback)
   return id
 end
 
+---@param mode mini.codex.Mode
 local function start_codex(mode)
   local cwd = vim.fn.getcwd()
   local list, previous, step, session_idx
@@ -185,7 +201,7 @@ local function start_codex(mode)
     end
   end
   local active = T.bufnr and vim.api.nvim_buf_is_valid(T.bufnr)
-  if active and (mode == "" or T.type == mode) then
+  if active and step == nil and (mode == "" or current_mode == mode) then
     if T.winid and vim.api.nvim_win_is_valid(T.winid) then
       input_call("hide")
       T.win_config = vim.api.nvim_win_get_config(T.winid)
@@ -215,7 +231,7 @@ local function start_codex(mode)
     T.current_session_idx, T.session_id = nil, nil
   end
   open_terminal()
-  T.type = mode
+  current_mode = mode
   local token = new_token()
   local jobid = start_job(executable, args, token, fallback)
   if jobid and previous then
@@ -242,19 +258,10 @@ local function pick_session()
       return
     end
     stop_codex()
-    T.type, T.current_session_idx, T.session_id = "pick", idx, list[idx].id
+    current_mode, T.current_session_idx, T.session_id = "pick", idx, list[idx].id
     open_terminal()
     start_job(executable, { "resume", list[idx].id }, new_token())
   end)
-end
-
-stop_codex = function()
-  local id = T.jobid
-  T.next_token, T.token, T.jobid = T.next_token + 1, nil, nil
-  if id and id > 0 then
-    vim.fn.jobstop(id)
-  end
-  clear()
 end
 
 ---@class mini.codex.Config
@@ -285,7 +292,9 @@ function M.setup(opts)
     if o.args == "pick" then
       return pick_session()
     end
-    start_codex(o.args == "toggle" and "" or o.args)
+    local mode = o.args == "toggle" and "" or o.args
+    ---@cast mode mini.codex.Mode
+    start_codex(mode)
   end, {
     nargs = "?",
     complete = function()
