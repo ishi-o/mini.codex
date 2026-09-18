@@ -12,6 +12,7 @@ local M = {}
 ---| "mcp"
 ---| "file"
 ---| "subagent"
+---| "compact"
 ---| "unknown"
 
 ---@alias mini.codex.OutputChatTurnLabel
@@ -22,6 +23,7 @@ local M = {}
 ---| "MCP tool"
 ---| "File changes"
 ---| "Subagent"
+---| "Compact"
 ---| "Unknown"
 
 ---@class mini.codex.OutputChatTurn
@@ -66,14 +68,29 @@ local function string_value(value, fallback)
   return fallback
 end
 
+local function short_text(value, max_chars)
+  if vim.fn.strchars(value) > max_chars then
+    return vim.fn.strcharpart(value, 0, max_chars - 1) .. "…"
+  end
+  return value
+end
+
 ---@type table<string, mini.codex.OutputChatTurnKind>
 local item_kinds = {
   userMessage = "user",
+  UserMessage = "user",
   agentMessage = "assistant",
+  AgentMessage = "assistant",
   reasoning = "reasoning",
+  Reasoning = "reasoning",
   commandExecution = "command",
+  CommandExecution = "command",
   mcpToolCall = "mcp",
+  McpToolCall = "mcp",
   fileChange = "file",
+  FileChange = "file",
+  contextCompaction = "compact",
+  ContextCompaction = "compact",
 }
 
 ---@type table<mini.codex.OutputChatTurnKind, mini.codex.OutputChatTurnLabel>
@@ -85,17 +102,27 @@ local turn_labels = {
   mcp = "MCP tool",
   file = "File changes",
   subagent = "Subagent",
+  compact = "Compact",
   unknown = "Unknown",
 }
+
+local function item_kind(item_type)
+  return item_kinds[string_value(item_type)] or "unknown"
+end
 
 local function query(sql, db)
   db = db or database_path()
   if vim.fn.filereadable(db) ~= 1 then
     return {}
   end
-  local output = vim.fn.system({ "sqlite3", "-json", db, sql })
+  local started, process = pcall(vim.system, { "sqlite3", "-json", db, sql }, { text = true })
+  if not started then
+    return {}
+  end
+  local result = process:wait()
+  local output = result.stdout or ""
   local ok, rows = pcall(vim.json.decode, output)
-  if vim.v.shell_error ~= 0 or output == "" or not ok or type(rows) ~= "table" then
+  if result.code ~= 0 or output == "" or not ok or type(rows) ~= "table" then
     return {}
   end
   return rows
@@ -105,7 +132,13 @@ end
 ---@return mini.codex.Session[]
 function M.session_list(cwd)
   local sql = string.format(
-    "SELECT id, title FROM threads WHERE cwd = %s AND archived = 0 ORDER BY created_at DESC LIMIT 20",
+    [[
+      SELECT id, title
+      FROM threads
+      WHERE cwd = %s AND archived = 0
+      ORDER BY created_at DESC
+      LIMIT 20
+    ]],
     quote(cwd)
   )
   local sessions = {}
@@ -121,7 +154,15 @@ function M.session_list(cwd)
 end
 
 local function rollout_path(thread_id)
-  local sql = string.format("SELECT rollout_path FROM threads WHERE id = %s LIMIT 1", quote(thread_id))
+  local sql = string.format(
+    [[
+      SELECT rollout_path
+      FROM threads
+      WHERE id = %s
+      LIMIT 1
+    ]],
+    quote(thread_id)
+  )
   local row = query(sql)[1]
   if not row or type(row.rollout_path) ~= "string" or row.rollout_path == "" then
     return
@@ -142,7 +183,7 @@ local function content_text(content)
   if type(content) ~= "table" then
     return
   end
-  for _, field in ipairs({ "text", "output_text", "value" }) do
+  for _, field in ipairs({ "text", "output_text", "value", "summary_text", "reasoning_text" }) do
     if type(content[field]) == "string" then
       return content[field]
     end
@@ -155,44 +196,32 @@ local function content_text(content)
   end
   local parts = {}
   for _, item in ipairs(content) do
-    if type(item) == "string" then
-      parts[#parts + 1] = item
-    elseif type(item) == "table" then
-      local text = item.text or item.output_text or item.value
-      if type(text) == "string" then
-        parts[#parts + 1] = text
-      elseif item.content ~= nil then
-        local nested = content_text(item.content)
-        if nested then
-          parts[#parts + 1] = nested
-        end
-      end
+    local text = content_text(item)
+    if text then
+      parts[#parts + 1] = text
     end
   end
   return #parts > 0 and table.concat(parts, "\n") or nil
 end
 
+local message_roles = {
+  user_message = "user",
+  userMessage = "user",
+  agent_message = "assistant",
+  agentMessage = "assistant",
+  assistant_message = "assistant",
+  assistantMessage = "assistant",
+}
+
 local function message_from_table(value, turn_id)
   if type(value) ~= "table" then
     return
   end
-  local role = value.role
-  local kind = value.type
-  local text
-  if role == "user" or role == "assistant" then
-    text = content_text(value.content or value.text or value.message)
-  elseif kind == "user_message" or kind == "userMessage" then
-    role = "user"
-    text = content_text(value.message or value.text or value.content)
-  elseif
-    kind == "agent_message"
-    or kind == "agentMessage"
-    or kind == "assistant_message"
-    or kind == "assistantMessage"
-  then
-    role = "assistant"
-    text = content_text(value.message or value.text or value.content)
-  end
+  local explicit_role = value.role == "user" or value.role == "assistant"
+  local role = explicit_role and value.role or message_roles[value.type]
+  local content = explicit_role and (value.content or value.text or value.message)
+    or (value.message or value.text or value.content)
+  local text = content_text(content)
   if not role or not text or text == "" then
     return
   end
@@ -294,8 +323,72 @@ local function encode_json(value)
   return ok and encoded or ""
 end
 
+local function shell_arguments(command)
+  local arguments = {}
+  local argument = {}
+  local quote
+  local escaped = false
+  local index = 1
+
+  while index <= #command do
+    local character = command:sub(index, index)
+    if escaped then
+      argument[#argument + 1] = character
+      escaped = false
+    elseif character == "\\" and quote ~= "'" then
+      escaped = true
+    elseif quote then
+      if character == quote then
+        quote = nil
+      else
+        argument[#argument + 1] = character
+      end
+    elseif character == "'" or character == '"' then
+      quote = character
+    elseif character:find("%s") then
+      if #argument > 0 then
+        arguments[#arguments + 1] = table.concat(argument)
+        argument = {}
+      end
+    else
+      argument[#argument + 1] = character
+    end
+    index = index + 1
+  end
+
+  if #argument > 0 then
+    arguments[#arguments + 1] = table.concat(argument)
+  end
+  return arguments
+end
+
+local function without_shell_wrapper(command)
+  local arguments = shell_arguments(command)
+  local shell = arguments[1] and arguments[1]:match("[^/\\]+$")
+  local option = arguments[2]
+  if shell and shell ~= "ssh" and (shell == "sh" or shell:match("sh$")) and option and option:sub(1, 1) == "-" then
+    return arguments[3] or command
+  end
+  return command
+end
+
+local function display_command(item)
+  if type(item.commandActions) == "table" then
+    local commands = {}
+    for _, action in ipairs(item.commandActions) do
+      if type(action) == "table" and type(action.command) == "string" and action.command ~= "" then
+        commands[#commands + 1] = without_shell_wrapper(action.command)
+      end
+    end
+    if #commands > 0 then
+      return table.concat(commands, "\n")
+    end
+  end
+  return without_shell_wrapper(string_value(item.command, ""))
+end
+
 local function command_turn(item)
-  local lines = { "```sh", "$ " .. string_value(item.command, ""), "```" }
+  local lines = { "```sh", display_command(item), "```" }
   local output = string_value(item.aggregatedOutput)
     or string_value(item.output)
     or string_value(item.stderr)
@@ -356,7 +449,7 @@ local function file_change_turn(item)
 end
 
 local function item_turn(item)
-  local kind = item_kinds[item.type] or "unknown"
+  local kind = item_kind(item.type)
   if kind == "user" then
     return {
       kind = "user",
@@ -370,11 +463,16 @@ local function item_turn(item)
       text = string_value(item.text) or content_text(item.content) or "",
     }
   elseif kind == "reasoning" then
-    local reasoning = type(item.summary) == "table" and #item.summary > 0 and item.summary or item.content
+    local reasoning = content_text(item.summary)
+      or content_text(item.content)
+      or content_text(item.summary_text)
+      or content_text(item.raw_content)
+      or string_value(item.reasoning_text)
+      or string_value(item.text)
     return {
       kind = "reasoning",
       label = turn_labels.reasoning,
-      text = content_text(reasoning) or "",
+      text = reasoning or "",
     }
   elseif kind == "command" then
     return command_turn(item)
@@ -394,9 +492,9 @@ local function item_turn(item)
 end
 
 local function preview_turn(row)
-  local kind = item_kinds[string_value(row.item_type)] or "unknown"
-  local summary = string_value(row.summary)
-  local status = string_value(row.status)
+  local kind = item_kind(row.item_type)
+  local summary = string_value(row.summary, "")
+  local status = string_value(row.status, "")
   local exit_code = tonumber(row.exit_code)
   if exit_code then
     status = status ~= "" and status .. " · exit " .. exit_code or "exit " .. exit_code
@@ -407,6 +505,9 @@ local function preview_turn(row)
     if item then
       return item_turn(item)
     end
+  elseif kind == "command" then
+    summary = without_shell_wrapper(summary)
+    summary = short_text(summary, 160)
   end
 
   return {
@@ -419,14 +520,15 @@ local function preview_turn(row)
 end
 
 local function subagent_turns(thread_id, chats)
-  local rows = query(
-    string.format(
-      "SELECT e.child_thread_id AS id, e.status, t.title, t.created_at "
-        .. "FROM thread_spawn_edges e LEFT JOIN threads t ON t.id = e.child_thread_id "
-        .. "WHERE e.parent_thread_id = %s ORDER BY t.created_at",
-      quote(thread_id)
-    )
-  )
+  local rows = query(string.format(
+    [[
+        SELECT e.child_thread_id AS id, e.status, t.title, t.created_at
+        FROM thread_spawn_edges e LEFT JOIN threads t ON t.id = e.child_thread_id
+        WHERE e.parent_thread_id = %s
+        ORDER BY t.created_at
+      ]],
+    quote(thread_id)
+  ))
   for _, row in ipairs(rows) do
     if type(row.id) == "string" and row.id ~= "" then
       local created_at = tonumber(row.created_at)
@@ -458,8 +560,12 @@ end
 local function thread_history(thread_id)
   local turn_rows = query(
     string.format(
-      "SELECT turn_id, status, started_at, completed_at FROM thread_turns "
-        .. "WHERE thread_id = %s ORDER BY rollout_ordinal",
+      [[
+        SELECT turn_id, status, started_at, completed_at
+        FROM thread_turns
+        WHERE thread_id = %s
+        ORDER BY rollout_ordinal
+      ]],
       quote(thread_id)
     ),
     history_database_path()
@@ -491,19 +597,26 @@ local function thread_history(thread_id)
 
   local item_rows = query(
     string.format(
-      "SELECT turn_id, item_id, item_type, "
-        .. "json_extract(item_json, '$.status') AS status, "
-        .. "json_extract(item_json, '$.exitCode') AS exit_code, "
-        .. "CASE "
-        .. "WHEN item_type = 'commandExecution' THEN substr(json_extract(item_json, '$.command'), 1, 160) "
-        .. "WHEN item_type = 'mcpToolCall' THEN substr(json_extract(item_json, '$.server') || ' / ' "
-        .. "|| json_extract(item_json, '$.tool'), 1, 160) "
-        .. "WHEN item_type = 'fileChange' THEN coalesce(json_extract(item_json, '$.changes[0].path'), '') "
-        .. "WHEN item_type = 'reasoning' THEN substr(coalesce(json_extract(item_json, '$.summary[0].text'), "
-        .. "json_extract(item_json, '$.content[0]'), ''), 1, 160) "
-        .. "ELSE substr(item_json, 1, 160) END AS summary, "
-        .. "CASE WHEN item_type IN ('userMessage', 'agentMessage') THEN item_json END AS item_json "
-        .. "FROM thread_items WHERE thread_id = %s ORDER BY rollout_ordinal",
+      [[
+        SELECT turn_id, item_id, item_type,
+          json_extract(item_json, '$.status') AS status,
+          json_extract(item_json, '$.exitCode') AS exit_code,
+          CASE
+            WHEN lower(item_type) = 'commandexecution' THEN substr(coalesce(
+              json_extract(item_json, '$.commandActions[0].command'), json_extract(item_json, '$.command')
+            ), 1, 512)
+            WHEN lower(item_type) = 'mcptoolcall' THEN substr(
+              json_extract(item_json, '$.server') || ' / ' || json_extract(item_json, '$.tool'), 1, 160
+            )
+            WHEN lower(item_type) = 'filechange' THEN coalesce(json_extract(item_json, '$.changes[0].path'), '')
+            WHEN lower(item_type) = 'contextcompaction' THEN 'context compacted'
+            ELSE substr(item_json, 1, 160)
+          END AS summary,
+          CASE WHEN lower(item_type) IN ('usermessage', 'agentmessage') THEN item_json END AS item_json
+        FROM thread_items
+        WHERE thread_id = %s AND lower(item_type) <> 'reasoning'
+        ORDER BY rollout_ordinal
+      ]],
       quote(thread_id)
     ),
     history_database_path()
@@ -545,8 +658,13 @@ function M.output_turn_detail(thread_id, turn, chat_turn_id)
   if turn.detail_thread_id then
     local row = query(
       string.format(
-        "SELECT item_json FROM thread_items WHERE thread_id = %s AND item_type = 'agentMessage' "
-          .. "ORDER BY rollout_ordinal DESC LIMIT 1",
+        [[
+          SELECT item_json
+          FROM thread_items
+          WHERE thread_id = %s AND item_type = 'agentMessage'
+          ORDER BY rollout_ordinal DESC
+          LIMIT 1
+        ]],
         quote(turn.detail_thread_id)
       ),
       history_database_path()
@@ -555,7 +673,12 @@ function M.output_turn_detail(thread_id, turn, chat_turn_id)
   elseif turn.item_id and type(chat_turn_id) == "string" then
     local row = query(
       string.format(
-        "SELECT item_json FROM thread_items WHERE thread_id = %s AND turn_id = %s AND item_id = %s LIMIT 1",
+        [[
+          SELECT item_json
+          FROM thread_items
+          WHERE thread_id = %s AND turn_id = %s AND item_id = %s
+          LIMIT 1
+        ]],
         quote(thread_id),
         quote(chat_turn_id),
         quote(turn.item_id)

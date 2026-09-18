@@ -44,9 +44,67 @@ local output_chats = {}
 local selected_chat
 local turn_ranges = {}
 local detail_turn
+local detail_cursor
+local input_winid
+local saved_output_width
+local saved_output_height
+local saved_split_minimums = {}
+local hiding_window = false
+local split_state
+local buffer_option = vim.api.nvim_win_resize and "buf" or "buffer"
 
 local function is_valid_window(win)
   return win and vim.api.nvim_win_is_valid(win)
+end
+
+local function buffer_opts(buf, opts)
+  opts[buffer_option] = buf
+  return opts
+end
+
+local function resize_window(win, width, height)
+  if vim.api.nvim_win_resize then
+    return vim.api.nvim_win_resize(win, width or -1, height or -1, {})
+  end
+  return vim.api.nvim_win_call(win, function()
+    if width then
+      vim.cmd("vertical resize " .. width)
+    end
+    if height then
+      vim.cmd("resize " .. height)
+    end
+  end)
+end
+
+local function relax_split_minimum(vertical)
+  local option = vertical and "winwidth" or "winheight"
+  if saved_split_minimums[option] == nil and vim.o[option] > 1 then
+    saved_split_minimums[option] = vim.o[option]
+    vim.o[option] = 1
+  end
+end
+
+local function restore_split_minimum()
+  for option, value in pairs(saved_split_minimums) do
+    vim.o[option] = value
+  end
+  saved_split_minimums = {}
+end
+
+local function save_view(win)
+  if not is_valid_window(win) then
+    return
+  end
+  local ok, view = pcall(vim.api.nvim_win_call, win, vim.fn.winsaveview)
+  return ok and view or nil
+end
+
+local function restore_view(win, view)
+  if view and is_valid_window(win) then
+    pcall(vim.api.nvim_win_call, win, function()
+      vim.fn.winrestview(view)
+    end)
+  end
 end
 
 local function set_window_options(win)
@@ -65,7 +123,7 @@ local function clear_keymaps(buf, bound_keys, modes)
   for _, key in pairs(bound_keys) do
     if type(key) == "string" and key ~= "" then
       for _, mode in ipairs(modes) do
-        pcall(vim.keymap.del, mode, key, { buffer = buf })
+        pcall(vim.keymap.del, mode, key, buffer_opts(buf, {}))
       end
     end
   end
@@ -76,39 +134,35 @@ end
 
 local function map_key(buf, mode, key, callback)
   if type(key) == "string" and key ~= "" then
-    vim.keymap.set(mode, key, callback, { buffer = buf, silent = true, nowait = true })
+    vim.keymap.set(mode, key, callback, buffer_opts(buf, { silent = true, nowait = true }))
+  end
+end
+
+local function bind_keymaps(buf, modes, bound_keys, names)
+  local keymap = config.keymap
+  clear_keymaps(buf, bound_keys, type(modes) == "table" and modes or { modes })
+  for _, name in ipairs(names) do
+    map_key(buf, modes, keymap[name], M[name])
+    bound_keys[name] = keymap[name]
   end
 end
 
 local function set_main_keymaps()
-  if not main_winid or not vim.api.nvim_win_is_valid(main_winid) then
-    return
+  if is_valid_window(main_winid) then
+    bind_keymaps(vim.api.nvim_win_get_buf(main_winid), { "n", "t" }, main_bound_keys, {
+      "toggle",
+      "refresh",
+      "prev",
+      "next",
+    })
   end
-  local buf = vim.api.nvim_win_get_buf(main_winid)
-  clear_keymaps(buf, main_bound_keys, { "n", "t" })
-  local keymap = config.keymap
-  map_key(buf, { "n", "t" }, keymap.toggle, M.toggle)
-  map_key(buf, { "n", "t" }, keymap.refresh, M.refresh)
-  map_key(buf, { "n", "t" }, keymap.prev, M.prev)
-  map_key(buf, { "n", "t" }, keymap.next, M.next)
-  main_bound_keys.toggle, main_bound_keys.refresh = keymap.toggle, keymap.refresh
-  main_bound_keys.prev, main_bound_keys.next = keymap.prev, keymap.next
 end
 
 local function set_output_keymaps()
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
-  clear_keymaps(bufnr, output_bound_keys, { "n" })
-  local keymap = config.keymap
-  map_key(bufnr, "n", keymap.toggle, M.toggle)
-  map_key(bufnr, "n", keymap.refresh, M.refresh)
-  map_key(bufnr, "n", keymap.prev, M.prev)
-  map_key(bufnr, "n", keymap.next, M.next)
-  map_key(bufnr, "n", keymap.detail, M.detail)
-  output_bound_keys.toggle, output_bound_keys.refresh = keymap.toggle, keymap.refresh
-  output_bound_keys.prev, output_bound_keys.next = keymap.prev, keymap.next
-  output_bound_keys.detail = keymap.detail
+  bind_keymaps(bufnr, "n", output_bound_keys, { "toggle", "refresh", "prev", "next", "detail" })
 end
 
 local function set_buffer_name()
@@ -204,6 +258,7 @@ local function set_text(chats)
   local chat = chats[selected_chat]
   local lines = render_chat(chat)
   detail_turn = nil
+  detail_cursor = nil
   set_output_title(chat)
   set_buffer_lines(lines)
 end
@@ -291,6 +346,13 @@ local function open_window()
   ensure_buffer()
   local opts = vim.deepcopy(config.win or {})
   local main_config = vim.api.nvim_win_get_config(main_winid)
+  local input_target = is_valid_window(input_winid) and input_winid or nil
+  if saved_output_width then
+    opts.width = saved_output_width
+  end
+  if saved_output_height then
+    opts.height = saved_output_height
+  end
   local normal_split = opts.relative == nil or opts.relative == ""
   adaptive_window = should_adapt(opts, main_config)
   if adaptive_window then
@@ -298,20 +360,107 @@ local function open_window()
   elseif normal_split then
     opts = normal_split_config(opts, main_config)
   end
-  winid = vim.api.nvim_open_win(bufnr, true, opts)
-  if not adaptive_window and normal_split and is_vertical_split(opts) then
-    pcall(vim.api.nvim_win_set_width, winid, opts.width)
+  local vertical = normal_split and is_vertical_split(opts)
+  local target = normal_split and opts.win or nil
+  local stacked = input_target
+    and vim.api.nvim_win_get_config(input_target).relative == ""
+    and main_config.relative == ""
+    and target == main_winid
+    and vertical
+    and (opts.split == "left" or opts.split == "right")
+  local stack_requested = stacked
+  local extent = target and (vertical and vim.api.nvim_win_get_width(target) or vim.api.nvim_win_get_height(target))
+  local input_height = stacked and vim.api.nvim_win_get_height(input_target) or nil
+  local main_view = normal_split and save_view(main_winid) or nil
+  local main_width = normal_split and vim.api.nvim_win_get_width(main_winid) or nil
+  local main_height = normal_split and vim.api.nvim_win_get_height(main_winid) or nil
+  if stacked then
+    opts.win = input_target
+  end
+  if normal_split then
+    relax_split_minimum(vertical)
+  end
+  winid = vim.api.nvim_open_win(bufnr, not stacked, opts)
+  if stacked then
+    local moved, result = pcall(vim.fn.win_splitmove, main_winid, input_target, {
+      vertical = false,
+      rightbelow = false,
+    })
+    stacked = moved and result == 0
+  end
+  if stacked then
+    pcall(resize_window, input_target, nil, input_height)
+    target = main_winid
+  elseif stack_requested then
+    target = input_target
+  end
+  if normal_split then
+    if vertical then
+      pcall(resize_window, winid, opts.width)
+      pcall(resize_window, target, math.max(1, extent - vim.api.nvim_win_get_width(winid) - 1))
+    else
+      pcall(resize_window, winid, nil, opts.height)
+      pcall(resize_window, target, nil, math.max(1, extent - vim.api.nvim_win_get_height(winid) - 1))
+    end
+    local restore_width = target ~= main_winid or not vertical
+    local restore_height = target ~= main_winid or vertical
+    pcall(resize_window, main_winid, restore_width and main_width or nil, restore_height and main_height or nil)
+    split_state = { target = target, vertical = vertical, stacked = stacked }
+    restore_view(main_winid, main_view)
+  elseif not adaptive_window then
+    restore_split_minimum()
   end
   set_window_options(winid)
   set_output_keymaps()
+  if stacked and is_valid_window(winid) then
+    vim.api.nvim_set_current_win(winid)
+  end
 end
 
 function M.hide()
   if is_valid_window(winid) then
+    local state = split_state
+    local split_target = state and is_valid_window(state.target) and state.target or nil
+    local vertical = state and state.vertical or false
+    local main_view = save_view(main_winid)
+    local target_view = split_target ~= main_winid and save_view(split_target) or nil
+    local main_width = is_valid_window(main_winid) and vim.api.nvim_win_get_width(main_winid) or nil
+    local main_height = is_valid_window(main_winid) and vim.api.nvim_win_get_height(main_winid) or nil
+    local input_height = state
+        and state.stacked
+        and is_valid_window(input_winid)
+        and vim.api.nvim_win_get_height(input_winid)
+      or nil
+    local split_extent = split_target
+        and (vertical and vim.api.nvim_win_get_width(split_target) + vim.api.nvim_win_get_width(winid) + 1 or vim.api.nvim_win_get_height(
+          split_target
+        ) + vim.api.nvim_win_get_height(winid) + 1)
+      or nil
+    saved_output_width = vim.api.nvim_win_get_width(winid)
+    saved_output_height = vim.api.nvim_win_get_height(winid)
+    local equalalways = vim.o.equalalways
+    vim.o.equalalways = false
+    hiding_window = true
     vim.api.nvim_win_hide(winid)
+    hiding_window = false
+    vim.o.equalalways = equalalways
+    if split_extent then
+      pcall(resize_window, split_target, vertical and split_extent or nil, vertical and nil or split_extent)
+    end
+    if is_valid_window(main_winid) then
+      local restore_width = split_target ~= main_winid or not vertical
+      local restore_height = split_target ~= main_winid or vertical
+      pcall(resize_window, main_winid, restore_width and main_width or nil, restore_height and main_height or nil)
+    end
+    if input_height and is_valid_window(input_winid) then
+      pcall(resize_window, input_winid, nil, input_height)
+    end
+    restore_view(main_winid, main_view)
+    restore_view(split_target, target_view)
   end
   winid = nil
-  adaptive_window = false
+  adaptive_window, split_state = false, nil
+  restore_split_minimum()
 end
 
 ---@param token integer?
@@ -363,7 +512,11 @@ function M.detail()
     return
   end
   if detail_turn then
+    local cursor = detail_cursor
     set_text(output_chats)
+    if cursor then
+      pcall(vim.api.nvim_win_set_cursor, winid, cursor)
+    end
     return
   end
 
@@ -386,6 +539,7 @@ function M.detail()
     return
   end
   detail_turn = turn
+  detail_cursor = vim.api.nvim_win_get_cursor(winid)
   local lines = {
     string.format("# Detail · Turn %d · %s", turn_index, turn.label),
     "",
@@ -420,11 +574,13 @@ end
 ---@param main_win integer
 ---@param id string?
 ---@param token integer?
-function M.attach(main_win, id, token)
+---@param input_win integer?
+function M.attach(main_win, id, token, input_win)
   if not config.enabled or not is_valid_window(main_win) then
     return
   end
   main_winid, main_bufnr, session_id, session_token = main_win, vim.api.nvim_win_get_buf(main_win), id, token
+  input_winid = is_valid_window(input_win) and input_win or nil
   output_chats, selected_chat = {}, nil
   set_buffer_name()
   set_main_keymaps()
@@ -474,17 +630,26 @@ function M.close()
   end
   bufnr, main_winid, main_bufnr, session_id, session_token = nil, nil, nil, nil, nil
   main_bound_keys, output_bound_keys = {}, {}
-  adaptive_window, syncing_window = false, false
+  adaptive_window, syncing_window, split_state = false, false, nil
   output_title = "Codex output"
   output_chats, selected_chat = {}, nil
-  turn_ranges, detail_turn = {}, nil
+  turn_ranges, detail_turn, detail_cursor = {}, nil, nil
+  input_winid, saved_output_width, saved_output_height = nil, nil, nil
+  restore_split_minimum()
 end
 
 vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, { callback = sync_window })
 vim.api.nvim_create_autocmd("WinClosed", {
   callback = function(args)
-    if tonumber(args.match) == main_winid then
+    local closed = tonumber(args.match)
+    if closed == main_winid then
       M.close()
+    elseif closed == winid then
+      winid = nil
+      adaptive_window, split_state = false, nil
+      if not hiding_window then
+        vim.schedule(restore_split_minimum)
+      end
     end
   end,
 })
