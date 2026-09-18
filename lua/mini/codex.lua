@@ -21,7 +21,6 @@ local DEFAULT_CONFIG = {
     win = {
       win = 0,
       split = "below",
-      height = math.max(1, math.floor(vim.o.lines * 0.3)),
     },
     keymap = {
       jump = "<C-g>",
@@ -41,6 +40,9 @@ local DEFAULT_CONFIG = {
     keymap = {
       toggle = "<C-t>",
       refresh = "<C-r>",
+      prev = "<M-p>",
+      next = "<M-n>",
+      detail = "<CR>",
     },
   },
 }
@@ -56,6 +58,14 @@ end
 
 local function output_call(method, ...)
   return output and output[method](...)
+end
+
+local function merge_component_config(current, opts)
+  local merged = vim.tbl_deep_extend("force", vim.deepcopy(current), opts)
+  if opts.win then
+    merged.win = vim.deepcopy(opts.win)
+  end
+  return merged
 end
 
 local function codex_executable()
@@ -82,7 +92,7 @@ local function configure_window()
 end
 
 local function open_input()
-  input_call("open", T.winid, function()
+  return input_call("open", T.winid, function()
     return T.jobid
   end)
 end
@@ -99,8 +109,8 @@ local function open_terminal(win_config)
 end
 
 local function close_terminal()
-  input_call("close")
   output_call("close")
+  input_call("close")
   if T.winid then
     pcall(vim.api.nvim_win_close, T.winid, true)
   end
@@ -178,8 +188,8 @@ local function start_job(executable, args, token, fallback)
   T.jobid = id
   vim.b[T.bufnr].terminal_job_id = id
   configure_window()
-  output_call("attach", T.winid, T.session_id, token)
-  open_input()
+  local input_win = open_input()
+  output_call("attach", T.winid, T.session_id, token, input_win)
   return id
 end
 
@@ -206,15 +216,15 @@ local function start_codex(mode)
   local active = T.bufnr and vim.api.nvim_buf_is_valid(T.bufnr)
   if active and step == nil and (mode == "" or current_mode == mode) then
     if T.winid and vim.api.nvim_win_is_valid(T.winid) then
-      input_call("hide")
       output_call("hide")
+      input_call("hide")
       T.win_config = vim.api.nvim_win_get_config(T.winid)
       vim.api.nvim_win_hide(T.winid)
       T.winid = nil
     else
       open_terminal(T.win_config)
-      open_input()
-      output_call("attach", T.winid, T.session_id, T.token)
+      local input_win = open_input()
+      output_call("attach", T.winid, T.session_id, T.token, input_win)
     end
     return
   elseif active then
@@ -277,13 +287,9 @@ end
 ---@param opts? mini.codex.Config
 function M.setup(opts)
   opts = opts or {}
-  config.win = opts.win or config.win
+  config.win = vim.deepcopy(opts.win or config.win)
   if opts.input then
-    local input_config = vim.tbl_deep_extend("force", config.input, opts.input)
-    if opts.input.win then
-      input_config.win = vim.deepcopy(opts.input.win)
-    end
-    config.input = input_config
+    config.input = merge_component_config(config.input, opts.input)
     input_call("close")
     input = nil
     if config.input.enabled then
@@ -292,18 +298,14 @@ function M.setup(opts)
     end
   end
   if opts.output then
-    local output_config = vim.tbl_deep_extend("force", config.output, opts.output)
-    if opts.output.win then
-      output_config.win = vim.deepcopy(opts.output.win)
-    end
-    config.output = output_config
+    config.output = merge_component_config(config.output, opts.output)
     output_call("close")
     output = nil
     if config.output.enabled then
       output = require("mini.codex.output")
       output.setup(config.output)
       if T.winid then
-        output.attach(T.winid, T.session_id, T.token)
+        output.attach(T.winid, T.session_id, T.token, input_call("window"))
       end
     end
   end

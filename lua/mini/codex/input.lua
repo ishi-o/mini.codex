@@ -33,7 +33,6 @@ local defaults = {
   win = {
     win = 0,
     split = "below",
-    height = math.max(1, math.floor(vim.o.lines * 0.3)),
   },
   keymap = {
     jump = "<C-g>",
@@ -61,6 +60,18 @@ local lsp_client_id
 local adaptive_float = false
 local syncing_float = false
 local available = true
+local default_height_ratio = 0.3
+local saved_split_height
+local buffer_option = vim.api.nvim_win_resize and "buf" or "buffer"
+
+local function buffer_opts(buf, opts)
+  opts[buffer_option] = buf
+  return opts
+end
+
+local function default_height(main_config)
+  return math.max(1, math.floor(main_config.height * default_height_ratio))
+end
 
 local function buffer_text()
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
@@ -106,6 +117,7 @@ local function adaptive_float_config(opts, main_config)
   opts.row = main_config.height + border_height(main_config) + (row_offset or 0)
   opts.col = opts.col or 0
   opts.width = opts.width or main_config.width
+  opts.height = opts.height or default_height(main_config)
   opts.split, opts.vertical = nil, nil
   return opts
 end
@@ -130,6 +142,7 @@ local function sync_float()
     row = opts.row,
     col = opts.col,
     width = opts.width,
+    height = opts.height,
   })
   syncing_float = false
 end
@@ -140,6 +153,8 @@ local function show_input()
   end
   local opts = vim.deepcopy(config.win or {})
   local main_config = vim.api.nvim_win_get_config(main_winid)
+  local normal_split = main_config.relative == "" and (opts.relative == nil or opts.relative == "")
+  opts.height = (normal_split and saved_split_height) or opts.height or default_height(main_config)
   adaptive_float = false
   if opts.relative == "win" or (main_config.relative ~= "" and (opts.relative == nil or opts.relative == "")) then
     opts = adaptive_float_config(opts, main_config)
@@ -155,10 +170,17 @@ end
 
 function M.hide()
   if winid and vim.api.nvim_win_is_valid(winid) then
+    if vim.api.nvim_win_get_config(winid).relative == "" then
+      saved_split_height = vim.api.nvim_win_get_height(winid)
+    end
     vim.api.nvim_win_hide(winid)
   end
   winid = nil
   adaptive_float = false
+end
+
+function M.window()
+  return winid and vim.api.nvim_win_is_valid(winid) and winid or nil
 end
 
 ---@param mode mini.codex.EditorMode
@@ -175,9 +197,9 @@ local function request_editor(mode, key)
   pending, replacement = mode, mode == "apply" and buffer_text() or nil
   vim.api.nvim_set_current_win(main_winid)
   if key then
-    vim.fn.chansend(jobid, key)
+    vim.api.nvim_chan_send(jobid, key)
   end
-  vim.fn.chansend(jobid, "\7")
+  vim.api.nvim_chan_send(jobid, "\7")
 end
 
 local function apply()
@@ -218,6 +240,11 @@ local function schedule_history()
   end, 50)
 end
 
+local function cancel_completion()
+  local completion = vim.fn.complete_info()
+  return (vim.fn.pumvisible() == 1 or completion.mode ~= "") and "<C-e>" or ""
+end
+
 ---@param direction mini.codex.HistoryDirection
 local function request_history(direction)
   history_queue[#history_queue + 1] = direction
@@ -230,9 +257,7 @@ local function request_history(direction)
 end
 
 local function apply_mapping()
-  local completion = vim.fn.complete_info()
-  local cancel = (vim.fn.pumvisible() == 1 or completion.mode ~= "") and "<C-e>" or ""
-  return cancel .. "<Esc><Cmd>lua require('mini.codex.input')._apply()<CR>"
+  return cancel_completion() .. "<Esc><Cmd>lua require('mini.codex.input')._apply()<CR>"
 end
 
 M._apply = apply
@@ -363,7 +388,7 @@ function M.open(main_win, jobid_fn)
     vim.bo[bufnr].filetype = "markdown.codex"
     start_lsp(bufnr)
     vim.api.nvim_create_autocmd("WinLeave", {
-      buffer = bufnr,
+      [buffer_option] = bufnr,
       callback = function()
         local leaving = vim.api.nvim_get_current_win()
         vim.schedule(function()
@@ -378,10 +403,10 @@ function M.open(main_win, jobid_fn)
 
   local key = config.keymap.jump
   if type(key) == "string" and key ~= "" then
-    local opts = { buffer = bufnr, silent = true }
+    local opts = buffer_opts(bufnr, { silent = true })
     vim.keymap.set({ "n", "t" }, key, function()
       request_editor("edit")
-    end, { buffer = vim.api.nvim_win_get_buf(main_win), silent = true })
+    end, buffer_opts(vim.api.nvim_win_get_buf(main_win), { silent = true }))
     vim.keymap.set("n", key, apply, opts)
     vim.keymap.set("i", key, apply_mapping, vim.tbl_extend("force", opts, { expr = true }))
   end
@@ -389,14 +414,12 @@ function M.open(main_win, jobid_fn)
   local history_keys = { prev = config.keymap.prev, next = config.keymap.next }
   for direction, history_key in pairs(history_keys) do
     if type(history_key) == "string" and history_key ~= "" then
-      local history_opts = { buffer = bufnr, silent = true }
+      local history_opts = buffer_opts(bufnr, { silent = true })
       vim.keymap.set("n", history_key, function()
         request_history(direction)
       end, history_opts)
       vim.keymap.set("i", history_key, function()
-        local completion = vim.fn.complete_info()
-        local cancel = (vim.fn.pumvisible() == 1 or completion.mode ~= "") and "<C-e>" or ""
-        return cancel .. "<Esc><Cmd>lua require('mini.codex.input')._history('" .. direction .. "')<CR>"
+        return cancel_completion() .. "<Esc><Cmd>lua require('mini.codex.input')._history('" .. direction .. "')<CR>"
       end, vim.tbl_extend("force", history_opts, { expr = true }))
     end
   end
@@ -420,6 +443,7 @@ function M.close()
     nil, nil, nil, nil, nil, nil, nil
   history_queue, history_active, history_dispatch_scheduled = {}, false, false
   adaptive_float, syncing_float = false, false
+  saved_split_height = nil
 end
 
 vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, { callback = sync_float })
