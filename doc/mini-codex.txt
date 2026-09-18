@@ -1,5 +1,5 @@
 *mini-codex.txt*                      Run and resume the Codex CLI from Neovim
-                                  For v1.3.0    Last change: 2026 September 17
+                                  For v1.3.0    Last change: 2026 September 18
 
 ==============================================================================
 Table of Contents                               *mini-codex-table-of-contents*
@@ -38,7 +38,7 @@ vim.pack ~
     vim.pack.add({
         { src = "https://github.com/ishi-o/mini.codex" },
     })
-    
+
     require("mini.codex").setup()
 <
 
@@ -46,7 +46,7 @@ mini.deps ~
 
 >lua
     MiniDeps.add({ source = "https://github.com/ishi-o/mini.codex" })
-    
+
     require("mini.codex").setup()
 <
 
@@ -68,7 +68,6 @@ The complete default configuration is:
             win = {
                 win = 0,
                 split = "below",
-                height = math.max(1, math.floor(vim.o.lines * 0.3)),
             },
             keymap = {
                 jump = "<C-g>",
@@ -113,7 +112,7 @@ floating window.
             border = "rounded",
         },
     }
-    
+
     require("mini.codex").setup(opts)
 <
 
@@ -133,8 +132,8 @@ and floating layouts, dimensions, position, and appearance are controlled by
 native Neovim window configuration. For a floating Codex window, the default
 input follows the main window’s position, width, and 30% height; use
 `relative = "win"` for the same behavior with a custom floating configuration.
-An explicitly positioned `relative = "editor"` configuration is kept
-unchanged. Resizing one split follows Neovim’s native behavior.
+An explicitly positioned `relative = "editor"` configuration is kept unchanged.
+Resizing one split follows Neovim’s native behavior.
 
 The buffer uses the `markdown.codex` filetype, allowing the codex-prompt-lsp
 <https://github.com/ishi-o/codex-prompt-lsp> Neovim adapter to attach
@@ -166,7 +165,7 @@ or Mason; no additional configuration is needed:
             enabled = true,
         },
     }
-    
+
     require("mini.codex").setup(opts)
 <
 
@@ -192,6 +191,7 @@ disable it again:
             win = {
                 win = 0,
                 split = "below",
+                height = math.max(1, math.floor(vim.o.lines * 0.3)),
             },
             keymap = {
                 jump = "<C-g>", -- key that synchronizes and switches inputs
@@ -202,15 +202,14 @@ disable it again:
             lsp_cmd = "codex-prompt-lsp",
         },
     }
-    
+
     require("mini.codex").setup(opts)
 <
 
 `mini.codex.Config`, `mini.codex.InputConfig`, `mini.codex.OutputConfig`,
 `mini.codex.OutputChatTurnKind`, and `mini.codex.OutputChatTurnLabel` are
-exported LuaLS annotations. `win` uses Neovim’s
-`vim.api.keyset.win_config`, so native window fields also receive completion
-and diagnostics.
+exported LuaLS annotations. `win` uses Neovim’s `vim.api.keyset.win_config`,
+so native window fields also receive completion and diagnostics.
 
 
 OUTPUT PREVIEW (OPTIONAL)    *mini-codex-mini.codex-output-preview-(optional)*
@@ -246,21 +245,20 @@ Enable it with an `output` table:
             },
         },
     }
-    
+
     require("mini.codex").setup(opts)
 <
 
 The `output.win` table uses Neovim’s native window configuration. By default,
 the preview is a split to the right of the Codex window, with a width of 50% of
 the Codex window’s width and the same height. When both input and output are
-enabled, the preview remains on the right and occupies the full column, while
-the Codex window stays above the input pane on the left. The combined region
-keeps the bounds that the Codex/input stack had before the preview opened. An
-explicit `split`, `win`, `width`, or `height` is respected, including left-side
-and horizontal splits. Toggling preserves the surrounding layout, the main
-window view, and preview sizes changed manually after opening.
-For a floating preview, use `relative = "editor"` with the desired position and
-dimensions. The toggle key opens or hides the preview, and the refresh key
+enabled, the preview occupies the full right column, while the Codex window
+stays above the input pane on the left. The combined region keeps the bounds
+that the Codex/input stack had before the preview opened. An explicit `split`,
+`win`, `width`, or `height` is respected, including left-side and horizontal
+splits. For a floating preview, use `relative = "editor"` with the desired
+position and dimensions. Toggling preserves the surrounding layout, the main
+window view, and preview sizes changed manually after opening. The refresh key
 (default `<C-r>`) reloads the session while preserving the selected chat when
 possible. Put the cursor on a turn and press the detail key (default `<CR>`) to
 load only that turn’s full database record; press it again to return to the
@@ -281,7 +279,8 @@ COMMANDS                                      *mini-codex-mini.codex-commands*
 <
 
 Session and output navigation read Codex’s local `$CODEX_HOME/state_5.sqlite`
-and `$CODEX_HOME/thread_history_1.sqlite` databases, falling back to `~/.codex/`.
+and `$CODEX_HOME/thread_history_1.sqlite` databases, falling back to
+`~/.codex/`.
 
 Generated by panvimdoc <https://github.com/kdheepak/panvimdoc>
 
