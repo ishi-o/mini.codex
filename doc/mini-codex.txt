@@ -1,5 +1,5 @@
 *mini-codex.txt*                      Run and resume the Codex CLI from Neovim
-                                  For v1.3.0    Last change: 2026 September 18
+                                  For v1.3.0    Last change: 2026 September 26
 
 ==============================================================================
 Table of Contents                               *mini-codex-table-of-contents*
@@ -97,8 +97,8 @@ The complete default configuration is:
 <
 
 Set `daemon = false` to start Codex with `--no-daemon`, running the terminal
-session without the shared background app-server. Disabling the daemon
-requires Codex 0.154.0 or later.
+session without the shared background app-server. Disabling the daemon requires
+Codex 0.154.0 or later.
 
 Customize it only when needed by passing configuration tables to `setup()`. The
 `win` table is passed directly to `nvim_open_win()`, so it can also define a
