@@ -5,9 +5,11 @@ local M = {}
 local T = { next_token = 0 }
 ---@type mini.codex.Mode?
 local current_mode
+local daemon_version_supported
 
 ---@type mini.codex.Config
 local DEFAULT_CONFIG = {
+  daemon = true,
   win = {
     win = 0,
     split = "right",
@@ -51,6 +53,7 @@ local config = vim.deepcopy(DEFAULT_CONFIG)
 local input, output
 local storage = require("mini.codex.storage")
 local setup_done = false
+local DAEMON_MIN_VERSION = { 0, 154, 0 }
 
 local function input_call(method, ...)
   return input and input[method](...)
@@ -75,6 +78,41 @@ local function codex_executable()
     return
   end
   return path
+end
+
+local function version_at_least(version, minimum)
+  local parts = {}
+  for part in version:gmatch("%d+") do
+    parts[#parts + 1] = tonumber(part) or 0
+  end
+  for i = 1, #minimum do
+    local current = parts[i] or 0
+    if current ~= minimum[i] then
+      return current > minimum[i]
+    end
+  end
+  return true
+end
+
+local function daemon_supported()
+  if daemon_version_supported ~= nil then
+    return daemon_version_supported
+  end
+
+  local executable = codex_executable()
+  if not executable then
+    daemon_version_supported = false
+    return false
+  end
+
+  local ok, result = pcall(function()
+    return vim.system({ executable, "--version" }, { text = true }):wait()
+  end)
+  daemon_version_supported = ok
+    and result ~= nil
+    and result.code == 0
+    and version_at_least(result.stdout or "", DAEMON_MIN_VERSION)
+  return daemon_version_supported
 end
 
 local function session_list(cwd)
@@ -245,6 +283,16 @@ local function start_codex(mode)
   else
     T.current_session_idx, T.session_id = nil, nil
   end
+  if config.daemon == false then
+    if daemon_supported() then
+      args[#args + 1] = "--no-daemon"
+      if fallback then
+        fallback[#fallback + 1] = "--no-daemon"
+      end
+    else
+      vim.notify("Codex 0.154.0 or later is required for daemon configuration", vim.log.levels.WARN)
+    end
+  end
   open_terminal()
   current_mode = mode
   local token = new_token()
@@ -279,7 +327,50 @@ local function pick_session()
   end)
 end
 
+local function restart_codex()
+  local active = T.bufnr and vim.api.nvim_buf_is_valid(T.bufnr)
+  if not active then
+    return vim.notify("No active Codex session to restart", vim.log.levels.INFO)
+  end
+
+  local mode, session_idx, session_id = current_mode, T.current_session_idx, T.session_id
+  stop_codex()
+  local executable = codex_executable()
+  if not executable then
+    return
+  end
+
+  if session_id then
+    open_terminal()
+    current_mode = mode or "last"
+    T.current_session_idx, T.session_id = session_idx, session_id
+    start_job(executable, { "resume", session_id }, new_token())
+  else
+    start_codex(mode or "")
+  end
+end
+
+local function run_daemon_command(action)
+  if action ~= "enable" and action ~= "disable" and action ~= "restart" then
+    return vim.notify("Invalid CodexDaemon argument: " .. action, vim.log.levels.ERROR)
+  end
+
+  if action == "enable" then
+    config.daemon = true
+    return vim.notify("Codex daemon enabled")
+  elseif action == "disable" then
+    if not daemon_supported() then
+      return vim.notify("Codex 0.154.0 or later is required to disable the daemon", vim.log.levels.ERROR)
+    end
+    config.daemon = false
+    return vim.notify("Codex daemon disabled")
+  end
+
+  restart_codex()
+end
+
 ---@class mini.codex.Config
+---@field daemon? boolean
 ---@field win? vim.api.keyset.win_config
 ---@field input? mini.codex.InputConfig
 ---@field output? mini.codex.OutputConfig
@@ -287,6 +378,8 @@ end
 ---@param opts? mini.codex.Config
 function M.setup(opts)
   opts = opts or {}
+  daemon_version_supported = nil
+  config.daemon = opts.daemon ~= false
   config.win = vim.deepcopy(opts.win or config.win)
   if opts.input then
     config.input = merge_component_config(config.input, opts.input)
@@ -327,6 +420,14 @@ function M.setup(opts)
     nargs = "?",
     complete = function()
       return { "new", "last", "pick", "prev", "next", "stop", "toggle" }
+    end,
+  })
+  vim.api.nvim_create_user_command("CodexDaemon", function(o)
+    run_daemon_command(o.args)
+  end, {
+    nargs = 1,
+    complete = function()
+      return { "enable", "disable", "restart" }
     end,
   })
 end

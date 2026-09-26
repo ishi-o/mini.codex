@@ -6,6 +6,10 @@ local function eq(expected, actual)
   assert(expected == actual, string.format("expected %s, got %s", expected, actual))
 end
 
+local function table_eq(expected, actual)
+  assert(vim.deep_equal(expected, actual), string.format("expected %s, got %s", vim.inspect(expected), vim.inspect(actual)))
+end
+
 local function resize_window(win, width, height)
   if vim.api.nvim_win_resize then
     return vim.api.nvim_win_resize(win, width or -1, height or -1, {})
@@ -32,7 +36,7 @@ local function mock_system(callback)
 end
 
 busted.describe("mini.codex", function()
-  local jobs, stops, notices, temp_files, job_opts, lsp_config
+  local jobs, stops, notices, temp_files, job_opts, lsp_config, job_args, system_calls
   local original
 
   local function split_win()
@@ -59,7 +63,7 @@ busted.describe("mini.codex", function()
     pcall(vim.cmd, "Codex stop")
     vim.o.swapfile = false
 
-    jobs, stops, notices, temp_files, job_opts, lsp_config = 0, 0, {}, {}, nil, nil
+    jobs, stops, notices, temp_files, job_opts, lsp_config, job_args, system_calls = 0, 0, {}, {}, nil, nil, nil, {}
     original = {
       codex_home = vim.env.CODEX_HOME,
       exepath = vim.fn.exepath,
@@ -85,8 +89,9 @@ busted.describe("mini.codex", function()
     vim.fn.filereadable = function()
       return 1
     end
-    vim.fn.jobstart = function(_, opts)
+    vim.fn.jobstart = function(args, opts)
       jobs = jobs + 1
+      job_args = args
       job_opts = opts
       vim.api.nvim_buf_set_name(vim.api.nvim_get_current_buf(), "term://codex//codex")
       return jobs
@@ -101,9 +106,19 @@ busted.describe("mini.codex", function()
     vim.fn.serverstart = function()
       return "/tmp/mini-codex-test.sock"
     end
-    vim.system = mock_system(function()
-      return '[{"id":"only","title":"Only | session"}]'
-    end)
+    vim.system = function(args, _, callback)
+      system_calls[#system_calls + 1] = args
+      local stdout = vim.list_contains(args, "--version")
+        and "codex-cli 0.154.0"
+        or '[{"id":"only","title":"Only | session"}]'
+      local result = { code = 0, signal = 0, stdout = stdout, stderr = "" }
+      if callback then
+        callback(result)
+      end
+      return { wait = function()
+        return result
+      end }
+    end
   end)
 
   busted.after_each(function()
@@ -173,6 +188,84 @@ busted.describe("mini.codex", function()
 
     local commands = vim.api.nvim_get_commands({})
     assert(commands.Codex, "Codex command not found")
+    assert(commands.CodexDaemon, "CodexDaemon command not found")
+  end)
+
+  busted.it("runs Codex without the daemon when it is disabled", function()
+    require("mini.codex").setup({
+      daemon = false,
+      win = split_win(),
+    })
+
+    vim.cmd("Codex")
+    table_eq({ "/bin/codex", "--no-daemon" }, job_args)
+  end)
+
+  busted.it("omits the daemon option on unsupported Codex versions", function()
+    vim.system = function(args, _, callback)
+      system_calls[#system_calls + 1] = args
+      local stdout = vim.list_contains(args, "--version")
+        and "codex-cli 0.153.0"
+        or '[{"id":"only","title":"Only | session"}]'
+      local result = { code = 0, signal = 0, stdout = stdout, stderr = "" }
+      if callback then
+        callback(result)
+      end
+      return { wait = function()
+        return result
+      end }
+    end
+
+    require("mini.codex").setup({
+      daemon = false,
+      win = split_win(),
+    })
+
+    vim.cmd("Codex")
+    table_eq({ "/bin/codex" }, job_args)
+    eq("Codex 0.154.0 or later is required for daemon configuration", notices[#notices])
+  end)
+
+  busted.it("controls the daemon option with CodexDaemon commands", function()
+    require("mini.codex").setup()
+
+    vim.cmd("Codex")
+    table_eq({ "/bin/codex" }, job_args)
+
+    vim.cmd("CodexDaemon disable")
+    eq("Codex daemon disabled", notices[#notices])
+
+    vim.cmd("Codex stop")
+    vim.cmd("Codex")
+    table_eq({ "/bin/codex", "--no-daemon" }, job_args)
+
+    vim.cmd("CodexDaemon enable")
+    eq("Codex daemon enabled", notices[#notices])
+
+    vim.cmd("Codex stop")
+    vim.cmd("Codex")
+    table_eq({ "/bin/codex" }, job_args)
+  end)
+
+  busted.it("restarts the active Codex session with the daemon command", function()
+    require("mini.codex").setup()
+
+    vim.cmd("Codex")
+    table_eq({ "/bin/codex" }, job_args)
+
+    vim.cmd("CodexDaemon disable")
+    vim.cmd("CodexDaemon restart")
+    eq(2, jobs)
+    eq(1, stops)
+    table_eq({ "/bin/codex", "--no-daemon" }, job_args)
+  end)
+
+  busted.it("does not restart without an active Codex session", function()
+    require("mini.codex").setup()
+
+    vim.cmd("CodexDaemon restart")
+    eq(0, jobs)
+    eq("No active Codex session to restart", notices[#notices])
   end)
 
   busted.it("supports Codex toggle", function()

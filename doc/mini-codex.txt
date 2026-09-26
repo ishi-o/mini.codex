@@ -55,6 +55,7 @@ The complete default configuration is:
 >lua
     ---@type mini.codex.Config
     local DEFAULT_CONFIG = {
+        daemon = true,
         win = {
             win = 0,
             split = "right",
@@ -94,6 +95,10 @@ The complete default configuration is:
         },
     }
 <
+
+Set `daemon = false` to start Codex with `--no-daemon`, running the terminal
+session without the shared background app-server. Disabling the daemon
+requires Codex 0.154.0 or later.
 
 Customize it only when needed by passing configuration tables to `setup()`. The
 `win` table is passed directly to `nvim_open_win()`, so it can also define a
@@ -276,6 +281,9 @@ COMMANDS                                      *mini-codex-mini.codex-commands*
     :Codex prev   # previous session, pick the last if there is no active session now
     :Codex next   # next session
     :Codex stop   # close current session
+    :CodexDaemon enable   # use the shared daemon for future Codex sessions
+    :CodexDaemon disable  # start future Codex sessions with --no-daemon
+    :CodexDaemon restart  # restart the active Codex session with the current setting
 <
 
 Session and output navigation read Codex’s local `$CODEX_HOME/state_5.sqlite`
