@@ -1,5 +1,5 @@
 *mini-codex.txt*                      Run and resume the Codex CLI from Neovim
-                                  For v1.3.0    Last change: 2026 September 26
+                                  For v1.3.0    Last change: 2026 September 27
 
 ==============================================================================
 Table of Contents                               *mini-codex-table-of-contents*
