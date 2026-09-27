@@ -327,27 +327,27 @@ local function pick_session()
   end)
 end
 
-local function restart_codex()
-  local active = T.bufnr and vim.api.nvim_buf_is_valid(T.bufnr)
-  if not active then
-    return vim.notify("No active Codex session to restart", vim.log.levels.INFO)
-  end
-
-  local mode, session_idx, session_id = current_mode, T.current_session_idx, T.session_id
-  stop_codex()
+local function restart_daemon()
   local executable = codex_executable()
   if not executable then
     return
   end
-
-  if session_id then
-    open_terminal()
-    current_mode = mode or "last"
-    T.current_session_idx, T.session_id = session_idx, session_id
-    start_job(executable, { "resume", session_id }, new_token())
-  else
-    start_codex(mode or "")
+  if not daemon_supported() then
+    return vim.notify("Codex 0.154.0 or later is required to restart the daemon", vim.log.levels.ERROR)
   end
+
+  vim.system({ executable, "app-server", "daemon", "restart" }, { text = true }, function(result)
+    if result.code == 0 then
+      vim.notify("Codex daemon restarted")
+    else
+      local stderr = vim.trim(result.stderr or "")
+      local message = "Failed to restart Codex daemon"
+      if stderr ~= "" then
+        message = message .. ": " .. stderr
+      end
+      vim.notify(message, vim.log.levels.ERROR)
+    end
+  end)
 end
 
 local function run_daemon_command(action)
@@ -366,7 +366,7 @@ local function run_daemon_command(action)
     return vim.notify("Codex daemon disabled")
   end
 
-  restart_codex()
+  restart_daemon()
 end
 
 ---@class mini.codex.Config

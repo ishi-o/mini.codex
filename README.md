@@ -236,7 +236,7 @@ The `output.win` table uses Neovim's native window configuration. By default, th
 :Codex stop	  # close current session
 :CodexDaemon enable   # use the shared daemon for future Codex sessions
 :CodexDaemon disable  # start future Codex sessions with --no-daemon
-:CodexDaemon restart  # restart the active Codex session with the current setting
+:CodexDaemon restart  # restart the shared app-server daemon
 ```
 
 Session and output navigation read Codex's local `$CODEX_HOME/state_5.sqlite` and `$CODEX_HOME/thread_history_1.sqlite` databases, falling back to `~/.codex/`.

@@ -247,7 +247,7 @@ busted.describe("mini.codex", function()
     table_eq({ "/bin/codex" }, job_args)
   end)
 
-  busted.it("restarts the active Codex session with the daemon command", function()
+  busted.it("restarts the app-server daemon without restarting the active Codex session", function()
     require("mini.codex").setup()
 
     vim.cmd("Codex")
@@ -255,17 +255,19 @@ busted.describe("mini.codex", function()
 
     vim.cmd("CodexDaemon disable")
     vim.cmd("CodexDaemon restart")
-    eq(2, jobs)
-    eq(1, stops)
-    table_eq({ "/bin/codex", "--no-daemon" }, job_args)
+    eq(1, jobs)
+    eq(0, stops)
+    table_eq({ "/bin/codex", "app-server", "daemon", "restart" }, system_calls[#system_calls])
+    eq("Codex daemon restarted", notices[#notices])
   end)
 
-  busted.it("does not restart without an active Codex session", function()
+  busted.it("restarts the daemon without an active Codex session", function()
     require("mini.codex").setup()
 
     vim.cmd("CodexDaemon restart")
     eq(0, jobs)
-    eq("No active Codex session to restart", notices[#notices])
+    table_eq({ "/bin/codex", "app-server", "daemon", "restart" }, system_calls[#system_calls])
+    eq("Codex daemon restarted", notices[#notices])
   end)
 
   busted.it("supports Codex toggle", function()
