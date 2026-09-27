@@ -35,6 +35,7 @@ local storage = require("mini.codex.storage")
 local bufnr, winid, main_winid, main_bufnr
 local session_id
 local session_token
+local existing_session_ids = {}
 local main_bound_keys = {}
 local output_bound_keys = {}
 local adaptive_window = false
@@ -169,6 +170,16 @@ local function set_buffer_name()
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     local name = session_id and "mini-codex://output/" .. session_id or "mini-codex://output"
     pcall(vim.api.nvim_buf_set_name, bufnr, name)
+  end
+end
+
+local function remember_existing_sessions()
+  existing_session_ids = {}
+  if session_id then
+    return
+  end
+  for _, session in ipairs(storage.session_list(vim.fn.getcwd())) do
+    existing_session_ids[session.id] = true
   end
 end
 
@@ -472,6 +483,15 @@ function M.refresh(token)
   if token and session_token and token ~= session_token then
     return
   end
+  if not session_id then
+    for _, session in ipairs(storage.session_list(vim.fn.getcwd())) do
+      if not existing_session_ids[session.id] then
+        session_id = session.id
+        set_buffer_name()
+        break
+      end
+    end
+  end
   local previous = output_chats[selected_chat]
   local chats = storage.output_history(session_id)
   selected_chat = #chats
@@ -580,6 +600,7 @@ function M.attach(main_win, id, token, input_win)
     return
   end
   main_winid, main_bufnr, session_id, session_token = main_win, vim.api.nvim_win_get_buf(main_win), id, token
+  remember_existing_sessions()
   input_winid = is_valid_window(input_win) and input_win or nil
   output_chats, selected_chat = {}, nil
   set_buffer_name()
@@ -598,6 +619,9 @@ function M.set_session(id, token)
   end
   local session_changed = id ~= session_id
   session_id, session_token = id, token or session_token
+  if session_id then
+    existing_session_ids = {}
+  end
   if session_changed then
     output_chats, selected_chat = {}, nil
   end
